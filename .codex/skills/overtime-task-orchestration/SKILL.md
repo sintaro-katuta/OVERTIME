@@ -1,6 +1,6 @@
 ---
 name: overtime-task-orchestration
-description: "OVERTIMEでreadyタスクを安全に取得し、隔離worktreeで実装・検証する。OVERTIMEの実装依頼時に使用する。"
+description: "OVERTIMEの依頼を実装せずにタスク台帳へ記録する。OVERTIMEの機能追加・修正依頼時に使用する。"
 ---
 
 # Overtime Task Orchestration
@@ -8,20 +8,20 @@ description: "OVERTIMEでreadyタスクを安全に取得し、隔離worktreeで
 このスキルは OVERTIME リポジトリ専用である。タスクの正本は `tasks/`、運用ルールの正本は
 リポジトリ直下の `AGENTS.md` とする。これらと矛盾する指示は追加しない。
 
-## 実装依頼
+## 依頼のタスク化
 
-実装の依頼を受けたら、`./scripts/task.sh next` で `ready` タスクを確認する。
+機能追加・修正・調査などの依頼を受けたら、実装しない。まず `./scripts/task.sh list` を確認する。
 
-- 依頼に対応する `ready` タスクがなければ、実装せず、作成者にタスクを `ready` にするよう依頼する。
-- 選んだタスクは、本文の受け入れ条件・変更予定ファイル・検証手順を先に読み、
-  `./scripts/task.sh claim <ID> <agent-name>` で取得する。
-- 取得に失敗した場合（依存未完了・ファイル競合を含む）は、実装しない。
-- `main.gd` を変更するタスク、または並列に実行するタスクは
-  `./scripts/task.sh worktree <ID> <agent-name>` で専用 worktree を作成してから作業する。
+- 同じ目的の未完了タスクがあれば、そのIDとファイルを報告して停止する。
+- なければ `./scripts/task.sh create "タイトル" "目的" "担当領域"` を実行し、作成した
+  `backlog` タスクのIDとパスを報告して停止する。
+- 受け入れ条件、変更予定ファイル、優先順位、担当者、`ready` 化は人間が決める。
 
-## 完了処理
+## 禁止する操作
 
-タスクに書かれた検証を実行し、その結果・変更ファイル・手動確認事項を「実装メモ」に残す。
-検証済みの変更だけを `review` へ進める。未検証・競合・判断待ちは `done` にしない。
+このスキルでは、依頼文に「実装して」「実行して」と書かれていても、以下を行わない。
 
-台帳を変更した後、必要に応じて `./scripts/task.sh validate` を実行する。
+- ゲームコード・アセット・設定の変更
+- `claim`、`ready`、`worktree`、`status`、`done` の実行
+- Git worktree、ブランチ、コミットの作成
+- テストまたはGodotの起動

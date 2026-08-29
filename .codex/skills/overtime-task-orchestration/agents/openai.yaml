@@ -1,7 +1,7 @@
 interface:
   display_name: "OVERTIME Task Orchestration"
-  short_description: "OVERTIME専用の安全なタスク取得と並列実装ワークフロー"
-  default_prompt: "$overtime-task-orchestration を使って、readyのタスクを実装してください。"
+  short_description: "OVERTIME専用の実行しないタスク作成ワークフロー"
+  default_prompt: "$overtime-task-orchestration を使って、この依頼をタスク化してください。"
 
 policy:
   allow_implicit_invocation: true
