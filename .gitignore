@@ -1,0 +1,9 @@
+# Godot-generated editor and import data
+.godot/
+*.import
+
+# Each agent receives an isolated Git worktree here.
+.agent-worktrees/
+
+# Local operating-system files
+.DS_Store
