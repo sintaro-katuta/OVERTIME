@@ -1,0 +1,55 @@
+name: Development task
+description: Define an implementation-ready task for OVERTIME.
+title: "[Task]: "
+labels: ["enhancement", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        このフォームは、AI エージェントと人間が同じ情報を参照して作業を進めるためのタスク定義です。
+        実装を始める前に、目的・背景・スコープ・完了定義を具体化してください。
+  - type: textarea
+    id: objective
+    attributes:
+      label: 目的
+      description: このタスクで達成したいことを記載してください。
+      placeholder: 例：敵を倒した瞬間に種類別の VFX を出し、キルの手応えを分かりやすくする。
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: なぜこのタスクが必要か、解決したい課題や期待する価値を記載してください。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: スコープ
+      description: 今回やることと、今回やらないことを分けてください。
+      placeholder: |
+        - やること：通常キルとヘッドショットの VFX
+        - やらないこと：新規敵、音響の作り直し
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了定義
+      description: 完了と判断できる条件と、その条件をどう確認するかをチェックリストで記載してください。
+      placeholder: |
+        - [ ] Stage 1 で通常キルを行うと、青い VFX が表示される
+        - [ ] Stage 1 でヘッドショットを行うと、通常キルと区別できる VFX が表示される
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依存・競合・注意点
+      description: 先行する Issue、同時に進められない作業、設計上の制約を記載してください。なければ「なし」としてください。
+      placeholder: |
+        - 依存：なし
+        - 競合：プレイヤー移動の改修とは同時に進めない
+    validations:
+      required: true

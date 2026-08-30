@@ -8,9 +8,9 @@ Godot 4.6以降でこのフォルダをインポートし、`main.tscn`を実行
 
 ## AIエージェントとの開発
 
-タスク台帳と並列作業のルールは [tasks/README.md](tasks/README.md) と
-[AGENTS.md](AGENTS.md) にあります。以後は「敵の被弾 VFX を追加して」のように
-依頼するだけで、AI がタスクを作成して実装・検証まで進めます。
+タスクの正本は GitHub Issue です。Issue Form と並列作業のルールは
+[AGENTS.md](AGENTS.md) にあります。AI は `status:ready` の Issue に記載された目的、背景、
+スコープ、完了定義を基に実装を進め、進捗と結果を Issue に記録します。
 
 ## 操作
 
