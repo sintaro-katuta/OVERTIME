@@ -11,6 +11,7 @@ var player_level := 1
 var player_xp := 0
 var unlock_keys_used := 0
 var selected_weapon_id := "vanguard_556"
+var has_selected_weapon := false
 var weapon_states: Dictionary = {}
 
 func _init() -> void:
@@ -58,6 +59,7 @@ func select_weapon(weapon_id: String) -> bool:
 	if not is_weapon_unlocked(weapon_id):
 		return false
 	selected_weapon_id = weapon_id
+	has_selected_weapon = true
 	return true
 
 func set_equipped_attachments(weapon_id: String, attachment_ids: Array[String]) -> bool:
@@ -96,7 +98,7 @@ func preparation_view() -> Dictionary:
 		"player_xp": player_xp,
 		"player_xp_required": ProgressionConfigData.player_xp_required(player_level),
 		"available_unlock_keys": available_unlock_keys(),
-		"selected_weapon_id": selected_weapon_id,
+		"selected_weapon_id": selected_weapon_id if has_selected_weapon else "",
 		"loadout_rules": WeaponCatalogData.loadout_rules(),
 		"weapons": weapons,
 	}
@@ -129,6 +131,7 @@ func to_save_data() -> Dictionary:
 		"player_xp": player_xp,
 		"unlock_keys_used": unlock_keys_used,
 		"selected_weapon_id": selected_weapon_id,
+		"has_selected_weapon": has_selected_weapon,
 		"weapon_states": weapon_states.duplicate(true),
 	}
 
@@ -152,9 +155,13 @@ func load_save_data(data: Dictionary) -> Error:
 		if not _is_valid_attachment_loadout(weapon_id, state.equipped_attachment_ids):
 			state.equipped_attachment_ids = []
 		weapon_states[weapon_id] = state
+	# Saves made before the preparation screen used selected_weapon_id as the
+	# selection contract. Preserve that intent when migrating the old schema.
+	has_selected_weapon = bool(data.get("has_selected_weapon", false)) if data.has("has_selected_weapon") else data.has("selected_weapon_id")
 	selected_weapon_id = str(data.get("selected_weapon_id", selected_weapon_id))
 	if not is_weapon_unlocked(selected_weapon_id):
 		selected_weapon_id = "vanguard_556"
+		has_selected_weapon = false
 	_advance_player_levels()
 	for weapon_id in WeaponCatalogData.WEAPON_IDS:
 		var state: Dictionary = weapon_states[weapon_id]

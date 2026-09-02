@@ -101,6 +101,15 @@ var reward_title: Label
 var reward_body: Label
 var reward_buttons: Array[Button] = []
 var pause_panel: PanelContainer
+var gameplay_hud: Control
+var preparation_layer: CanvasLayer
+var preparation_panel: PanelContainer
+var preparation_tab_buttons: Dictionary = {}
+var preparation_content: VBoxContainer
+var preparation_level_label: Label
+var preparation_action_area: CenterContainer
+var preparation_tab := "play"
+var preparation_open := false
 var enemy_root: Node3D
 var projectile_root: Node3D
 var player_bullet_root: Node3D
@@ -270,6 +279,20 @@ class MiniMap extends Control:
 		var side: Vector2 = Vector2(-facing.y, facing.x)
 		draw_colored_polygon(PackedVector2Array([player_point + facing * 7.0, player_point - facing * 4.0 + side * 4.0, player_point - facing * 4.0 - side * 4.0]), NEON_CYAN)
 
+class PreparationCharacterPreview extends Control:
+	func _draw() -> void:
+		var center := size * 0.5
+		draw_circle(center + Vector2(0, -54), 29, Color("d8e7e5"))
+		draw_circle(center + Vector2(-10, -62), 5, Color("1b2731"))
+		draw_circle(center + Vector2(10, -62), 5, Color("1b2731"))
+		draw_rect(Rect2(center + Vector2(-40, -20), Vector2(80, 94)), Color("263a44"), true)
+		draw_rect(Rect2(center + Vector2(-34, -13), Vector2(68, 76)), Color("42636a"), true)
+		draw_rect(Rect2(center + Vector2(-30, 4), Vector2(60, 14)), Color("72a6a0"), true)
+		draw_line(center + Vector2(-40, -8), center + Vector2(-72, 44), Color("42636a"), 20.0)
+		draw_line(center + Vector2(40, -8), center + Vector2(72, 44), Color("42636a"), 20.0)
+		draw_line(center + Vector2(-20, 72), center + Vector2(-25, 130), Color("263a44"), 24.0)
+		draw_line(center + Vector2(20, 72), center + Vector2(25, 130), Color("263a44"), 24.0)
+
 class AmmoPickup extends Node3D:
 	var main: Node3D
 	var lifetime := 14.0
@@ -295,6 +318,10 @@ func _ready() -> void:
 	build_world()
 	build_player()
 	build_ui()
+	build_preparation_ui()
+	# Issue #2 owns the title-screen transition and calls show_preparation_screen().
+	# Until that screen is integrated, retain the original direct-run behavior.
+	preparation_layer.visible = false
 	start_stage(1)
 
 func build_world() -> void:
@@ -424,6 +451,7 @@ func get_weapon_ads_position() -> Vector3:
 func build_ui() -> void:
 	var layer := CanvasLayer.new(); add_child(layer)
 	var root := Control.new(); root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_IGNORE; layer.add_child(root)
+	gameplay_hud = root
 	var minimap_frame := PanelContainer.new(); minimap_frame.set_anchors_preset(Control.PRESET_TOP_LEFT); minimap_frame.position=Vector2(24,20); minimap_frame.size=Vector2(184,184); minimap_frame.add_theme_stylebox_override("panel",hud_style(Color("82939a"),Color("10171ee8"))); root.add_child(minimap_frame)
 	ui_minimap = MiniMap.new(); ui_minimap.main=self; ui_minimap.custom_minimum_size=Vector2(156,156); ui_minimap.mouse_filter=Control.MOUSE_FILTER_IGNORE; minimap_frame.add_child(ui_minimap)
 	var life_panel := PanelContainer.new(); life_panel.set_anchors_preset(Control.PRESET_CENTER_TOP); life_panel.position=Vector2(-190,98); life_panel.size=Vector2(380,78); life_panel.add_theme_stylebox_override("panel",hud_style(NEON_CYAN)); root.add_child(life_panel)
@@ -465,7 +493,161 @@ func build_ui() -> void:
 	for index in 3:
 		var reward_button := Button.new(); reward_button.add_theme_font_size_override("font_size",16); reward_button.pressed.connect(select_reward.bind(index)); content.add_child(reward_button); reward_buttons.append(reward_button)
 
+func build_preparation_ui() -> void:
+	preparation_layer = CanvasLayer.new()
+	preparation_layer.layer = 2
+	add_child(preparation_layer)
+	var overlay := ColorRect.new()
+	overlay.color = Color("071019f2")
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	preparation_layer.add_child(overlay)
+	preparation_panel = PanelContainer.new()
+	preparation_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 36)
+	preparation_panel.add_theme_stylebox_override("panel", hud_style(NEON_CYAN, Color("0d1724f5")))
+	overlay.add_child(preparation_panel)
+	preparation_level_label = Label.new()
+	preparation_level_label.position = Vector2(62, 52)
+	preparation_level_label.size = Vector2(280, 40)
+	preparation_level_label.add_theme_font_size_override("font_size", 21)
+	preparation_level_label.add_theme_color_override("font_color", Color("f0f6ff"))
+	overlay.add_child(preparation_level_label)
+	preparation_action_area = CenterContainer.new()
+	preparation_action_area.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	preparation_action_area.offset_top = -148
+	preparation_action_area.offset_bottom = -68
+	overlay.add_child(preparation_action_area)
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override("separation", 20)
+	preparation_panel.add_child(layout)
+	var header := VBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	layout.add_child(header)
+	var title := Label.new()
+	title.text = "RUN PREPARATION"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 32)
+	title.add_theme_color_override("font_color", NEON_CYAN)
+	header.add_child(title)
+	var tab_row := HBoxContainer.new()
+	tab_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	tab_row.add_theme_constant_override("separation", 12)
+	header.add_child(tab_row)
+	for tab_data in [["play", "プレイ"], ["weapons", "武器"], ["settings", "設定"]]:
+		var tab_button := Button.new()
+		tab_button.custom_minimum_size = Vector2(150, 42)
+		tab_button.text = tab_data[1]
+		tab_button.add_theme_font_size_override("font_size", 18)
+		tab_button.pressed.connect(select_preparation_tab.bind(tab_data[0]))
+		tab_row.add_child(tab_button)
+		preparation_tab_buttons[tab_data[0]] = tab_button
+	var divider := HSeparator.new()
+	layout.add_child(divider)
+	preparation_content = VBoxContainer.new()
+	preparation_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	preparation_content.alignment = BoxContainer.ALIGNMENT_CENTER
+	preparation_content.add_theme_constant_override("separation", 14)
+	layout.add_child(preparation_content)
+	select_preparation_tab("play")
+
+func select_preparation_tab(tab: String) -> void:
+	preparation_tab = tab
+	for key in preparation_tab_buttons:
+		var tab_button := preparation_tab_buttons[key] as Button
+		tab_button.disabled = key == tab
+		tab_button.add_theme_color_override("font_color", NEON_CYAN if key == tab else Color("c7d2e0"))
+	for child in preparation_content.get_children():
+		preparation_content.remove_child(child)
+		child.queue_free()
+	for child in preparation_action_area.get_children():
+		preparation_action_area.remove_child(child)
+		child.queue_free()
+	preparation_level_label.visible = tab == "play"
+	match tab:
+		"play": build_preparation_play_tab()
+		"weapons": build_preparation_placeholder("武器", "出撃武器の選択と出撃操作は、武器タブの実装（Issue #4）で追加されます。")
+		"settings": build_preparation_placeholder("設定", "設定項目は後続タスクで追加されます。")
+
+func build_preparation_play_tab() -> void:
+	var view := progression.preparation_view()
+	preparation_level_label.text = "PLAYER LEVEL  %02d" % int(view.player_level)
+	var preview := PreparationCharacterPreview.new()
+	preview.custom_minimum_size = Vector2(220, 250)
+	preview.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	preparation_content.add_child(preview)
+	var operator_label := Label.new()
+	operator_label.text = "OPERATOR  //  PLAYER"
+	operator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	operator_label.add_theme_font_size_override("font_size", 16)
+	operator_label.add_theme_color_override("font_color", Color("9caeca"))
+	preparation_content.add_child(operator_label)
+	var selected_weapon_id := str(view.selected_weapon_id)
+	if selected_weapon_id.is_empty():
+		var choose_weapon := Button.new()
+		choose_weapon.text = "武器を選択"
+		choose_weapon.custom_minimum_size = Vector2(280, 52)
+		choose_weapon.focus_mode = Control.FOCUS_ALL
+		choose_weapon.add_theme_font_size_override("font_size", 20)
+		choose_weapon.pressed.connect(select_preparation_tab.bind("weapons"))
+		preparation_action_area.add_child(choose_weapon)
+		choose_weapon.grab_focus()
+		return
+	var weapon_name := selected_weapon_id
+	for weapon_data in view.weapons:
+		if str(weapon_data.id) == selected_weapon_id:
+			weapon_name = str(weapon_data.display_name)
+			break
+	var selected_weapon := Label.new()
+	selected_weapon.text = "選択中の武器  //  %s" % weapon_name
+	selected_weapon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	selected_weapon.add_theme_font_size_override("font_size", 20)
+	selected_weapon.add_theme_color_override("font_color", NEON_CYAN)
+	preparation_content.add_child(selected_weapon)
+	var launch_hint := Label.new()
+	launch_hint.text = "出撃は［武器］タブの「出撃」操作から開始します。"
+	launch_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	launch_hint.add_theme_font_size_override("font_size", 16)
+	launch_hint.add_theme_color_override("font_color", Color("c7d2e0"))
+	preparation_content.add_child(launch_hint)
+
+func build_preparation_placeholder(title_text: String, body_text: String) -> void:
+	var title := Label.new()
+	title.text = title_text
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override("font_color", NEON_CYAN)
+	preparation_content.add_child(title)
+	var body := Label.new()
+	body.text = body_text
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(560, 0)
+	body.add_theme_font_size_override("font_size", 17)
+	body.add_theme_color_override("font_color", Color("c7d2e0"))
+	preparation_content.add_child(body)
+
+func show_preparation_screen() -> void:
+	select_preparation_tab("play")
+	preparation_open = true
+	game_active = false
+	shop_open = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	gameplay_hud.visible = false
+	preparation_layer.visible = true
+
+func begin_run_from_preparation() -> void:
+	# Issue #4 owns the UI action that calls this once a weapon has been selected.
+	if str(progression.preparation_view().selected_weapon_id).is_empty():
+		select_preparation_tab("weapons")
+		return
+	preparation_open = false
+	preparation_layer.visible = false
+	gameplay_hud.visible = true
+	restart_run()
+
 func _input(event: InputEvent) -> void:
+	if preparation_open:
+		return
 	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed and not event.echo:
 		if game_active and not shop_open: set_game_pause(not game_paused)
 		return
