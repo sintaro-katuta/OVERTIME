@@ -25,6 +25,7 @@ const WEAPON_MODEL_PATHS := ["res://assets/viewmodels/assault_rifle_west.glb", "
 const WEAPON_MODEL_NAMES := ["Assault Rifle West", "Sci-Fi Pistol"]
 const HEADSHOT_DAMAGE_MULTIPLIER := 3
 const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
+const ProgressionStateData = preload("res://gameplay/progression_state.gd")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -35,6 +36,7 @@ var muzzle_marker: Marker3D
 var weapon_model_index := 0
 var weapon_damage_multiplier := 1.0
 var weapon_experience := WeaponExperienceLedger.new()
+var progression = ProgressionStateData.new()
 var weapon_recoil := 0.0
 var weapon_bob := 0.0
 var aiming := false
@@ -287,6 +289,8 @@ class AmmoPickup extends Node3D:
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	rng.randomize()
+	# Progression is independent from a run, so a retry never erases it.
+	progression.load_from_file()
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	build_world()
 	build_player()
@@ -739,6 +743,7 @@ func get_weapon_direct_damage(_weapon_index: int) -> int:
 
 func record_weapon_direct_damage(weapon_index: int, damage: int) -> void:
 	var awarded := weapon_experience.award_direct_damage(weapon_index, damage)
+	progression.award_weapon_direct_damage(progression.selected_weapon_id, damage)
 	if awarded > 0:
 		push_event("%s XP +%d　合計 %d" % [WEAPON_MODEL_NAMES[weapon_index], awarded, weapon_experience.get_experience(weapon_index)])
 
@@ -754,7 +759,10 @@ func push_event(message: String, duration := 2.7) -> void:
 	event_timers[0] = duration
 
 func open_shop() -> void:
+	var earned_xp := progression.award_stage_completion(current_stage, time_left)
+	progression.save_to_file()
 	set_game_pause(false); reloading=false; reload_timer=0.0; toast_timer=0.0; toast_panel.visible=false; event_messages=["", "", ""]; event_timers=[0.0, 0.0, 0.0]; clear_projectiles(); clear_pickups(); shop_open=true; shop.visible=true; roll_reward_choices(); Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	push_event("ステージXP +%d　Lv.%d" % [earned_xp, progression.player_level])
 
 func get_reward_pool(premium: bool) -> Array[Dictionary]:
 	var pool: Array[Dictionary] = []
@@ -839,7 +847,9 @@ func on_player_hit(source_direction := Vector3.ZERO) -> void:
 	if time_left <= 0.0: end_run()
 
 func victory() -> void:
-	set_game_pause(false); reloading=false; reload_timer=0.0; damage_indicator_timer=0.0; push_event("オーバータイム達成　／　Rで再挑戦", 999.0); update_ui()
+	var earned_xp := progression.award_stage_completion(current_stage, time_left)
+	progression.save_to_file()
+	set_game_pause(false); reloading=false; reload_timer=0.0; damage_indicator_timer=0.0; push_event("オーバータイム達成　／　ステージXP +%d　Lv.%d　／　Rで再挑戦" % [earned_xp, progression.player_level], 999.0); update_ui()
 
 func restart_run() -> void:
 	set_game_pause(false)
