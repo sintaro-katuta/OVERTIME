@@ -23,6 +23,8 @@ const COVER_HALF_EXTENTS := [Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(1.5, 
 const FALLBACK_SPAWNS := [Vector3(-18, 0, -18), Vector3(18, 0, -18), Vector3(-18, 0, 18), Vector3(18, 0, 18), Vector3(-18, 0, 0), Vector3(18, 0, 0), Vector3(0, 0, -18)]
 const WEAPON_MODEL_PATHS := ["res://assets/viewmodels/assault_rifle_west.glb", "res://assets/viewmodels/scifi_pistol.glb"]
 const WEAPON_MODEL_NAMES := ["Assault Rifle West", "Sci-Fi Pistol"]
+const HEADSHOT_DAMAGE_MULTIPLIER := 3
+const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -31,6 +33,8 @@ var muzzle_light: OmniLight3D
 var weapon_model_node: Node3D
 var muzzle_marker: Marker3D
 var weapon_model_index := 0
+var weapon_damage_multiplier := 1.0
+var weapon_experience := WeaponExperienceLedger.new()
 var weapon_recoil := 0.0
 var weapon_bob := 0.0
 var aiming := false
@@ -197,6 +201,8 @@ class Projectile extends Area3D:
 class PlayerBullet extends MeshInstance3D:
 	var main: Node3D
 	var velocity := Vector3.ZERO
+	var weapon_index := 0
+	var direct_damage := 1
 	var lifetime := 0.70
 	func _physics_process(delta: float) -> void:
 		lifetime -= delta
@@ -213,7 +219,13 @@ class PlayerBullet extends MeshInstance3D:
 			var collider = hit.collider
 			if collider is Enemy:
 				var is_head: bool = hit.position.y > collider.global_position.y + main.HEADSHOT_HEIGHT
-				collider.take_damage(1, is_head, false)
+				var effective_damage: int = direct_damage
+				if is_head:
+					effective_damage *= int(main.HEADSHOT_DAMAGE_MULTIPLIER)
+				# Award the calculated hit damage before applying it. This preserves
+				# overkill damage, while non-weapon damage never enters this path.
+				main.record_weapon_direct_damage(weapon_index, effective_damage)
+				collider.take_damage(effective_damage, is_head, false)
 			queue_free()
 			return
 		global_position = next_position
@@ -553,6 +565,8 @@ func spawn_player_bullet() -> void:
 	if direction.length_squared() < 0.001: return
 	var bullet := PlayerBullet.new()
 	bullet.main = self
+	bullet.weapon_index = weapon_model_index
+	bullet.direct_damage = get_weapon_direct_damage(weapon_model_index)
 	bullet.global_position = muzzle_marker.global_position
 	bullet.velocity = direction.normalized() * 96.0
 	var mesh := CylinderMesh.new()
@@ -720,6 +734,14 @@ func on_enemy_damaged(remaining_health: int) -> void:
 	hit_marker_timer = 0.08
 	add_time(0.0, "装甲命中　残り耐久 %d" % max(0, remaining_health))
 
+func get_weapon_direct_damage(_weapon_index: int) -> int:
+	return maxi(1, roundi(weapon_damage_multiplier))
+
+func record_weapon_direct_damage(weapon_index: int, damage: int) -> void:
+	var awarded := weapon_experience.award_direct_damage(weapon_index, damage)
+	if awarded > 0:
+		push_event("%s XP +%d　合計 %d" % [WEAPON_MODEL_NAMES[weapon_index], awarded, weapon_experience.get_experience(weapon_index)])
+
 func add_time(amount: float, message: String) -> void:
 	time_left=clamp(time_left+amount,0.0,time_cap)
 	push_event(message)
@@ -825,6 +847,8 @@ func restart_run() -> void:
 	shop_open = false
 	has_grapple = false
 	owned_rewards = {}
+	weapon_damage_multiplier = 1.0
+	weapon_experience.reset()
 	reward_choices = []
 	reserve_ammo_limit = MAX_RESERVE_AMMO; fire_rate_multiplier = 1.0; kill_time_bonus = 0.0; dash_speed = 22.0; dash_cooldown_duration = 1.0; damage_time_loss = 4.0
 	time_left = START_TIME
