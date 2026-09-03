@@ -26,6 +26,7 @@ const WEAPON_MODEL_NAMES := ["Assault Rifle West", "Sci-Fi Pistol"]
 const HEADSHOT_DAMAGE_MULTIPLIER := 3
 const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
 const ProgressionStateData = preload("res://gameplay/progression_state.gd")
+const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -110,6 +111,11 @@ var preparation_level_label: Label
 var preparation_action_area: CenterContainer
 var preparation_tab := "play"
 var preparation_open := false
+var title_background: Node3D
+var title_camera: Camera3D
+var title_layer: CanvasLayer
+var title_start_button: Button
+var title_open := true
 var enemy_root: Node3D
 var projectile_root: Node3D
 var player_bullet_root: Node3D
@@ -314,15 +320,16 @@ func _ready() -> void:
 	rng.randomize()
 	# Progression is independent from a run, so a retry never erases it.
 	progression.load_from_file()
-	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	build_world()
 	build_player()
 	build_ui()
 	build_preparation_ui()
-	# Issue #2 owns the title-screen transition and calls show_preparation_screen().
-	# Until that screen is integrated, retain the original direct-run behavior.
+	build_title_background()
+	build_title_ui()
 	preparation_layer.visible = false
-	start_stage(1)
+	gameplay_hud.visible = false
+	game_active = false
 
 func build_world() -> void:
 	var environment := WorldEnvironment.new()
@@ -399,9 +406,82 @@ func get_stage_cover_positions(stage: int) -> Array[Vector3]:
 func build_player() -> void:
 	player = CharacterBody3D.new(); player.name = "Player"; player.position = stage_origin + STAGE_START_LOCAL
 	var collider := CollisionShape3D.new(); var shape := CapsuleShape3D.new(); shape.radius = 0.42; shape.height = 1.7; collider.shape = shape; player.add_child(collider)
-	camera = Camera3D.new(); camera.name = "Camera3D"; camera.position = Vector3(0,0.6,0); camera.current = true; camera.fov = 82; camera.near = 0.03; player.add_child(camera)
+	camera = Camera3D.new(); camera.name = "Camera3D"; camera.position = Vector3(0,0.6,0); camera.current = false; camera.fov = 82; camera.near = 0.03; player.add_child(camera)
 	build_weapon()
 	add_child(player)
+
+func build_title_background() -> void:
+	title_background = TitleBackgroundScene.instantiate()
+	add_child(title_background)
+	title_camera = Camera3D.new()
+	title_camera.name = "TitleCamera"
+	title_camera.position = Vector3(21, 15, 25)
+	title_camera.fov = 67.0
+	title_camera.cull_mask = 2
+	title_camera.look_at(Vector3(0, 1.2, -3.0))
+	title_camera.current = true
+	add_child(title_camera)
+
+func build_title_ui() -> void:
+	title_layer = CanvasLayer.new()
+	title_layer.layer = 3
+	add_child(title_layer)
+	var overlay := ColorRect.new()
+	overlay.color = Color("030814b8")
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_layer.add_child(overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(center)
+	var layout := VBoxContainer.new()
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+	layout.add_theme_constant_override("separation", 18)
+	center.add_child(layout)
+	var title := Label.new()
+	title.text = "OVERTIME"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 72)
+	title.add_theme_color_override("font_color", Color("e7fbff"))
+	title.add_theme_color_override("font_shadow_color", NEON_CYAN)
+	title.add_theme_constant_override("shadow_offset_x", 2)
+	title.add_theme_constant_override("shadow_offset_y", 2)
+	layout.add_child(title)
+	var tagline := Label.new()
+	tagline.text = "TIME IS YOUR LIFE."
+	tagline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tagline.add_theme_font_size_override("font_size", 21)
+	tagline.add_theme_color_override("font_color", NEON_PURPLE.lightened(0.35))
+	layout.add_child(tagline)
+	var spacer := Control.new()
+	spacer.custom_minimum_size = Vector2(0, 42)
+	layout.add_child(spacer)
+	title_start_button = Button.new()
+	title_start_button.text = "RUN START"
+	title_start_button.custom_minimum_size = Vector2(270, 58)
+	title_start_button.focus_mode = Control.FOCUS_ALL
+	title_start_button.add_theme_font_size_override("font_size", 24)
+	title_start_button.add_theme_color_override("font_color", NEON_CYAN.lightened(0.4))
+	title_start_button.add_theme_stylebox_override("normal", hud_style(NEON_CYAN, Color("0b1520dd")))
+	title_start_button.add_theme_stylebox_override("focus", hud_style(NEON_PURPLE, Color("132033ee")))
+	title_start_button.pressed.connect(start_from_title)
+	layout.add_child(title_start_button)
+	title_start_button.call_deferred("grab_focus")
+
+func start_from_title() -> void:
+	if not title_open:
+		return
+	title_open = false
+	title_layer.visible = false
+	title_background.visible = false
+	title_camera.current = false
+	camera.current = true
+	show_preparation_screen()
+
+func _process(_delta: float) -> void:
+	if title_open and is_instance_valid(title_start_button):
+		# Keep the action readable while giving it a continuous invitation pulse.
+		title_start_button.modulate.a = 0.68 + (sin(Time.get_ticks_msec() * 0.005) + 1.0) * 0.16
 
 func build_weapon() -> void:
 	weapon = Node3D.new(); weapon.name = "PulseRifle"; weapon.position = get_weapon_hip_position(); weapon.rotation_degrees = Vector3(-8, -5, -3); camera.add_child(weapon)
