@@ -35,6 +35,8 @@ func refresh() -> void:
 	var view: Dictionary = progression.preparation_view()
 	var weapon_data := WeaponCatalogData.weapon(focused_weapon_id)
 	var weapon_state: Dictionary = progression.weapon_progress(focused_weapon_id)
+	var selected_skin_id: String = progression.selected_skin_id_for(focused_weapon_id)
+	var selected_skin := WeaponCatalogData.skin(focused_weapon_id, selected_skin_id)
 	var left := VBoxContainer.new()
 	left.custom_minimum_size = Vector2(460, 0)
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -45,7 +47,7 @@ func refresh() -> void:
 	preview = WeaponPreview.new()
 	preview.weapon_name = str(weapon_data.display_name)
 	preview.weapon_id = focused_weapon_id
-	preview.model_path = str(weapon_data.model_path)
+	preview.model_path = str(selected_skin.get("model_path", weapon_data.model_path))
 	preview.custom_minimum_size = Vector2(0, 120)
 	left.add_child(preview)
 	var level := int(weapon_state.level)
@@ -79,6 +81,16 @@ func refresh() -> void:
 		(weapon_state.equipped_attachment_ids as Array).size(),
 	], 16, Color("c7d2e0"))
 	left.add_child(attachments)
+	var skin_name := "標準外観" if selected_skin.is_empty() else str(selected_skin.display_name)
+	var skin_label := _label("スキン  ／  %s" % skin_name, 16, Color("c7d2e0"))
+	left.add_child(skin_label)
+	var available_skins: Array[String] = progression.available_skin_ids(focused_weapon_id)
+	if available_skins.size() > 1:
+		var skin_button := Button.new()
+		skin_button.text = "スキンを切替"
+		skin_button.custom_minimum_size = Vector2(190, 38)
+		skin_button.pressed.connect(_cycle_skin)
+		left.add_child(skin_button)
 	var action_row := HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 10)
 	left.add_child(action_row)
@@ -125,6 +137,14 @@ func _focus_weapon(weapon_id: String) -> void:
 
 func _equip_focused() -> void:
 	if progression.select_weapon(focused_weapon_id):
+		progression.save_to_file()
+		refresh()
+
+func _cycle_skin() -> void:
+	var skins: Array[String] = progression.available_skin_ids(focused_weapon_id)
+	var current: String = progression.selected_skin_id_for(focused_weapon_id)
+	var next_index := (skins.find(current) + 1) % skins.size()
+	if progression.select_skin(focused_weapon_id, skins[next_index]):
 		progression.save_to_file()
 		refresh()
 

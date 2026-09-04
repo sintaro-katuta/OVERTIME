@@ -39,6 +39,8 @@ var weapon_model_node: Node3D
 var muzzle_marker: Marker3D
 var weapon_model_index := 0
 var weapon_model_id := "vanguard_556"
+var weapon_skin_id := "default"
+var weapon_visual_data: Dictionary = {}
 var weapon_combat_profile: Dictionary = WeaponCombatProfileData.from_catalog("vanguard_556")
 var weapon_damage_multiplier := 1.0
 var weapon_experience := WeaponExperienceLedger.new()
@@ -524,26 +526,29 @@ func equip_weapon_model(weapon_id: String) -> void:
 	if weapon_data.is_empty(): return
 	weapon_model_id = weapon_id
 	weapon_combat_profile = WeaponCombatProfileData.from_catalog(weapon_id)
+	weapon_skin_id = progression.selected_skin_id_for(weapon_id)
+	weapon_visual_data = WeaponCatalogData.skin(weapon_id, weapon_skin_id)
 	weapon_model_index = 1 if weapon_id == "sidearm_9" else 0
 	if is_instance_valid(weapon_model_node): weapon_model_node.queue_free()
-	var model_scene := load(str(weapon_data.model_path)) as PackedScene
+	var model_path := str(weapon_visual_data.get("model_path", weapon_data.model_path))
+	var model_scene := load(model_path) as PackedScene
 	if not model_scene: return
 	weapon_model_node = model_scene.instantiate() as Node3D
 	if not weapon_model_node: return
 	# GLBモデルの原点は一人称武器用ではないため、腰だめ用に補正する。
-	weapon_model_node.position = Vector3(0.0, -0.07 if weapon_id == "vanguard_556" else -0.10, 0.0)
+	weapon_model_node.position = weapon_visual_data.get("model_position", Vector3(0.0, -0.07 if weapon_id == "vanguard_556" else -0.10, 0.0))
 	# AR は -Z 前方のまま、ピストルは元モデルの横向き軸を補正して
 	# 現在の向きから逆方向へ90度回す。
-	weapon_model_node.rotation_degrees = Vector3(0, 90 if weapon_id == "sidearm_9" else 0, 0)
+	weapon_model_node.rotation_degrees = weapon_visual_data.get("model_rotation_degrees", Vector3(0, 90 if weapon_id == "sidearm_9" else 0, 0))
 	# 元アセットの実寸が大きく異なるため、実プレイ画面で右手の視界を
 	# 占有しすぎない個別スケールにする。
-	weapon_model_node.scale = Vector3.ONE * (1.45 if weapon_id == "vanguard_556" else 0.30 if weapon_id == "sidearm_9" else 0.50)
+	weapon_model_node.scale = Vector3.ONE * float(weapon_visual_data.get("model_scale", 1.45 if weapon_id == "vanguard_556" else 0.30 if weapon_id == "sidearm_9" else 0.50))
 	weapon.add_child(weapon_model_node)
 	# 銃身のローカル軸が異なるため、モデルごとに銃口の位置と向きを明示する。
 	muzzle_marker = Marker3D.new()
 	muzzle_marker.name = "Muzzle"
-	muzzle_marker.position = Vector3(1.15, 0, 0) if weapon_id == "sidearm_9" else Vector3(0, 0, -0.72)
-	muzzle_marker.rotation_degrees = Vector3(0, -90, 0) if weapon_id == "sidearm_9" else Vector3.ZERO
+	muzzle_marker.position = weapon_visual_data.get("muzzle_position", Vector3(1.15, 0, 0) if weapon_id == "sidearm_9" else Vector3(0, 0, -0.72))
+	muzzle_marker.rotation_degrees = weapon_visual_data.get("muzzle_rotation_degrees", Vector3(0, -90, 0) if weapon_id == "sidearm_9" else Vector3.ZERO)
 	weapon_model_node.add_child(muzzle_marker)
 	muzzle_light.reparent(muzzle_marker, false)
 	muzzle_light.position = Vector3.ZERO
@@ -551,9 +556,13 @@ func equip_weapon_model(weapon_id: String) -> void:
 		if child is MeshInstance3D and child != weapon_model_node: child.visible = false
 
 func get_weapon_hip_position() -> Vector3:
+	if weapon_visual_data.has("hip_position"):
+		return weapon_visual_data.hip_position
 	return Vector3(0.28, -0.20, -0.48) if weapon_model_index == 0 else Vector3(0.45, -0.36, -0.40)
 
 func get_weapon_ads_position() -> Vector3:
+	if weapon_visual_data.has("ads_position"):
+		return weapon_visual_data.ads_position
 	# AR の照門・照星が画面中央のレティクルと重なる位置。
 	# 腰だめとは別に、わずかに左・上へ寄せてアイアンサイトを覗き込む。
 	return Vector3(0.0, -0.038, -0.38) if weapon_model_index == 0 else Vector3(0.30, -0.25, -0.52)

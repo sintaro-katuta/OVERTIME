@@ -62,6 +62,32 @@ func select_weapon(weapon_id: String) -> bool:
 	has_selected_weapon = true
 	return true
 
+func selected_skin_id_for(weapon_id: String) -> String:
+	if not weapon_states.has(weapon_id):
+		return "default"
+	return str(weapon_states[weapon_id].get("selected_skin_id", "default"))
+
+func is_skin_unlocked(weapon_id: String, skin_id: String) -> bool:
+	if skin_id == "default":
+		return true
+	var skin := WeaponCatalogData.skin(weapon_id, skin_id)
+	return not skin.is_empty() and player_level >= int(skin.unlock_player_level)
+
+func available_skin_ids(weapon_id: String) -> Array[String]:
+	var result: Array[String] = ["default"]
+	for skin in WeaponCatalogData.skins_for(weapon_id):
+		if is_skin_unlocked(weapon_id, str(skin.id)):
+			result.append(str(skin.id))
+	return result
+
+func select_skin(weapon_id: String, skin_id: String) -> bool:
+	if not is_weapon_unlocked(weapon_id) or not is_skin_unlocked(weapon_id, skin_id):
+		return false
+	var state: Dictionary = weapon_states[weapon_id]
+	state.selected_skin_id = skin_id
+	weapon_states[weapon_id] = state
+	return true
+
 func set_equipped_attachments(weapon_id: String, attachment_ids: Array[String]) -> bool:
 	if not is_weapon_unlocked(weapon_id) or not _is_valid_attachment_loadout(weapon_id, attachment_ids):
 		return false
@@ -92,6 +118,8 @@ func preparation_view() -> Dictionary:
 	for weapon_id in WeaponCatalogData.WEAPON_IDS:
 		var weapon: Dictionary = WeaponCatalogData.weapon(weapon_id).duplicate(true)
 		weapon.progress = weapon_progress(weapon_id)
+		weapon.selected_skin_id = selected_skin_id_for(weapon_id)
+		weapon.available_skin_ids = available_skin_ids(weapon_id)
 		weapons.append(weapon)
 	return {
 		"player_level": player_level,
@@ -152,8 +180,11 @@ func load_save_data(data: Dictionary) -> Error:
 		state.xp = maxi(0, int(saved.get("xp", 0)))
 		state.unlocked = bool(saved.get("unlocked", state.unlocked))
 		state.equipped_attachment_ids = _string_array(saved.get("equipped_attachment_ids", []))
+		state.selected_skin_id = str(saved.get("selected_skin_id", "default"))
 		if not _is_valid_attachment_loadout(weapon_id, state.equipped_attachment_ids):
 			state.equipped_attachment_ids = []
+		if not is_skin_unlocked(weapon_id, str(state.selected_skin_id)):
+			state.selected_skin_id = "default"
 		weapon_states[weapon_id] = state
 	# Saves made before the preparation screen used selected_weapon_id as the
 	# selection contract. Preserve that intent when migrating the old schema.
@@ -173,7 +204,7 @@ func _reset_weapon_states() -> void:
 	weapon_states.clear()
 	for weapon_id in WeaponCatalogData.WEAPON_IDS:
 		var data: Dictionary = WeaponCatalogData.weapon(weapon_id)
-		weapon_states[weapon_id] = {"level": 1, "xp": 0, "unlocked": bool(data.initially_unlocked), "equipped_attachment_ids": []}
+		weapon_states[weapon_id] = {"level": 1, "xp": 0, "unlocked": bool(data.initially_unlocked), "equipped_attachment_ids": [], "selected_skin_id": "default"}
 
 func _advance_player_levels() -> void:
 	while player_level < ProgressionConfigData.PLAYER_LEVEL_CAP:

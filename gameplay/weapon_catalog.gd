@@ -9,6 +9,21 @@ const WEAPON_IDS := [
 ]
 const SIGHT_LEVELS := [1, 6, 11, 16, 21, 26, 31, 36, 41, 46]
 const SPECIAL_LEVELS := [12, 17, 22, 27, 32, 37, 42, 47]
+const SKINS_BY_WEAPON := {
+	"vanguard_556": [{
+		"id": "obsidian_circuit",
+		"display_name": "Obsidian Circuit",
+		"unlock_player_level": 2,
+		"model_path": "res://assets/styloo_guns/ak47.glb",
+		"hip_position": Vector3(0.30, -0.24, -0.52),
+		"ads_position": Vector3(0.02, -0.05, -0.42),
+		"model_position": Vector3(0.0, -0.10, 0.0),
+		"model_rotation_degrees": Vector3(0.0, 180.0, 0.0),
+		"model_scale": 0.50,
+		"muzzle_position": Vector3(0.78, 0.0, 0.0),
+		"muzzle_rotation_degrees": Vector3(0.0, -90.0, 0.0),
+	}],
+}
 
 static var _weapons: Dictionary = {}
 static var _attachments: Dictionary = {}
@@ -20,6 +35,18 @@ static func weapons() -> Dictionary:
 static func weapon(weapon_id: String) -> Dictionary:
 	_ensure_built()
 	return _weapons.get(weapon_id, {})
+
+static func skins_for(weapon_id: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for entry in SKINS_BY_WEAPON.get(weapon_id, []):
+		result.append((entry as Dictionary).duplicate(true))
+	return result
+
+static func skin(weapon_id: String, skin_id: String) -> Dictionary:
+	for entry in skins_for(weapon_id):
+		if str(entry.id) == skin_id:
+			return entry
+	return {}
 
 static func attachments_for(weapon_id: String) -> Array[Dictionary]:
 	_ensure_built()
