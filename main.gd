@@ -27,6 +27,7 @@ const ProgressionStateData = preload("res://gameplay/progression_state.gd")
 const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
 const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
 const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd")
+const AttachmentEditorViewData = preload("res://gameplay/attachment_editor_view.gd")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -113,6 +114,7 @@ var preparation_action_area: CenterContainer
 var preparation_tab := "play"
 var preparation_open := false
 var weapon_selection_view: Control
+var attachment_editor_view: Control
 var title_background: Node3D
 var title_camera: Camera3D
 var title_layer: CanvasLayer
@@ -342,8 +344,12 @@ func _open_weapon_selection_for_capture() -> void:
 	var capture_args := OS.get_cmdline_user_args()
 	if capture_args.has("--capture-sidearm-screen") or capture_args.has("--capture-custom-screen"):
 		progression.select_weapon("sidearm_9")
+	if capture_args.has("--capture-attachment-loadout"):
+		progression.select_weapon("sidearm_9")
+		progression.award_weapon_direct_damage("sidearm_9", 10000000)
+		progression.set_equipped_attachments("sidearm_9", ["sidearm_9_sight_01", "sidearm_9_laser_common_01", "sidearm_9_magazine_common_01", "sidearm_9_muzzle_common_01"])
 	select_preparation_tab("weapons")
-	if capture_args.has("--capture-custom-screen"):
+	if capture_args.has("--capture-custom-screen") or capture_args.has("--capture-attachment-loadout"):
 		show_attachment_placeholder("sidearm_9")
 
 func build_world() -> void:
@@ -677,13 +683,11 @@ func show_attachment_placeholder(weapon_id: String) -> void:
 	for child in preparation_content.get_children():
 		preparation_content.remove_child(child)
 		child.queue_free()
-	var data := progression.weapon_progress(weapon_id)
-	build_preparation_placeholder("カスタム  ／  %s" % weapon_id, "アタッチメント編集は Issue #6 で実装予定です。現在の解放数: %d  ／  装備数: %d" % [progression.unlocked_attachment_ids(weapon_id).size(), (data.equipped_attachment_ids as Array).size()])
-	var back := Button.new()
-	back.text = "武器一覧へ戻る"
-	back.custom_minimum_size = Vector2(240, 44)
-	back.pressed.connect(select_preparation_tab.bind("weapons"))
-	preparation_action_area.add_child(back)
+	attachment_editor_view = AttachmentEditorViewData.new()
+	attachment_editor_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	attachment_editor_view.close_requested.connect(select_preparation_tab.bind("weapons"))
+	preparation_content.add_child(attachment_editor_view)
+	attachment_editor_view.setup(progression, weapon_id)
 
 func build_preparation_play_tab() -> void:
 	var view := progression.preparation_view()
