@@ -25,6 +25,7 @@ const HEADSHOT_DAMAGE_MULTIPLIER := 3
 const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
 const ProgressionStateData = preload("res://gameplay/progression_state.gd")
 const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
+const WeaponCombatProfileData = preload("res://gameplay/weapon_combat_profile.gd")
 const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
 const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd")
 const AttachmentEditorViewData = preload("res://gameplay/attachment_editor_view.gd")
@@ -38,6 +39,7 @@ var weapon_model_node: Node3D
 var muzzle_marker: Marker3D
 var weapon_model_index := 0
 var weapon_model_id := "vanguard_556"
+var weapon_combat_profile: Dictionary = WeaponCombatProfileData.from_catalog("vanguard_556")
 var weapon_damage_multiplier := 1.0
 var weapon_experience := WeaponExperienceLedger.new()
 var progression = ProgressionStateData.new()
@@ -318,7 +320,7 @@ class AmmoPickup extends Node3D:
 		rotation.y += delta * 2.5
 		position.y = base_y + sin(Time.get_ticks_msec() * 0.004) * 0.12
 		if global_position.distance_to(main.player.global_position) < 1.25:
-			main.collect_ammo_cell(12)
+			main.collect_ammo_cell(main.active_ammo_cell_amount())
 			queue_free()
 
 func _ready() -> void:
@@ -521,6 +523,7 @@ func equip_weapon_model(weapon_id: String) -> void:
 	var weapon_data := WeaponCatalogData.weapon(weapon_id)
 	if weapon_data.is_empty(): return
 	weapon_model_id = weapon_id
+	weapon_combat_profile = WeaponCombatProfileData.from_catalog(weapon_id)
 	weapon_model_index = 1 if weapon_id == "sidearm_9" else 0
 	if is_instance_valid(weapon_model_node): weapon_model_node.queue_free()
 	var model_scene := load(str(weapon_data.model_path)) as PackedScene
@@ -822,7 +825,7 @@ func _physics_process(delta: float) -> void:
 		if reload_timer <= 0.0:
 			reloading = false
 			if game_active:
-				var loaded := mini(MAGAZINE_SIZE - ammo, reserve_ammo)
+				var loaded := mini(active_magazine_capacity() - ammo, reserve_ammo)
 				ammo += loaded; reserve_ammo -= loaded
 				add_time(0.0, "リロード完了")
 	if grapple_kill_window <= 0.0: grapple_kill_target_id = 0
@@ -862,8 +865,8 @@ func shoot() -> void:
 		shot_cooldown=0.2
 		add_time(0.0, "弾倉が空です　Rでリロード")
 		return
-	shot_cooldown=0.16 / fire_rate_multiplier; ammo -= 1
-	weapon_recoil = min(1.0, weapon_recoil + 0.7); muzzle_light.light_energy = 7.0
+	shot_cooldown = active_fire_interval() / fire_rate_multiplier; ammo -= 1
+	weapon_recoil = min(1.0, weapon_recoil + active_recoil_impulse()); muzzle_light.light_energy = 7.0
 	spawn_player_bullet()
 
 func spawn_player_bullet() -> void:
@@ -964,12 +967,12 @@ func collect_ammo_cell(amount: int) -> void:
 	if reserve_ammo > before: add_time(0.0, "弾薬セル  +%d" % (reserve_ammo - before))
 
 func begin_reload() -> void:
-	if reloading or ammo >= MAGAZINE_SIZE: return
+	if reloading or ammo >= active_magazine_capacity(): return
 	if reserve_ammo <= 0:
 		add_time(0.0, "予備弾薬がありません")
 		return
 	reloading = true
-	reload_timer = RELOAD_DURATION
+	reload_timer = active_reload_duration()
 	add_time(0.0, "リロード中")
 
 func start_stage(stage: int) -> void:
@@ -1050,8 +1053,23 @@ func on_enemy_damaged(remaining_health: int) -> void:
 	hit_marker_timer = 0.08
 	add_time(0.0, "装甲命中　残り耐久 %d" % max(0, remaining_health))
 
+func active_magazine_capacity() -> int:
+	return int(weapon_combat_profile.get("magazine_capacity", MAGAZINE_SIZE))
+
+func active_fire_interval() -> float:
+	return float(weapon_combat_profile.get("fire_interval", 0.16))
+
+func active_reload_duration() -> float:
+	return float(weapon_combat_profile.get("reload_seconds", RELOAD_DURATION))
+
+func active_recoil_impulse() -> float:
+	return float(weapon_combat_profile.get("recoil_impulse", 0.7))
+
+func active_ammo_cell_amount() -> int:
+	return int(weapon_combat_profile.get("cell_amount", 12))
+
 func get_weapon_direct_damage(_weapon_index: int) -> int:
-	return maxi(1, roundi(weapon_damage_multiplier))
+	return maxi(1, roundi(float(weapon_combat_profile.get("damage", 1)) * weapon_damage_multiplier))
 
 func record_weapon_direct_damage(weapon_index: int, damage: int) -> void:
 	var awarded := weapon_experience.award_direct_damage(weapon_index, damage)
@@ -1175,7 +1193,7 @@ func restart_run() -> void:
 	weapon_damage_multiplier = 1.0
 	weapon_experience.reset()
 	reward_choices = []
-	reserve_ammo_limit = MAX_RESERVE_AMMO; fire_rate_multiplier = 1.0; kill_time_bonus = 0.0; dash_speed = 22.0; dash_cooldown_duration = 1.0; damage_time_loss = 4.0
+	reserve_ammo_limit = int(weapon_combat_profile.get("maximum_reserve", MAX_RESERVE_AMMO)); fire_rate_multiplier = 1.0; kill_time_bonus = 0.0; dash_speed = 22.0; dash_cooldown_duration = 1.0; damage_time_loss = 4.0
 	time_left = START_TIME
 	time_cap = STAGE_ONE_CAP
 	stage_origin = STAGE_ORIGINS[0]
@@ -1183,7 +1201,7 @@ func restart_run() -> void:
 	player.velocity = Vector3.ZERO
 	grapple_time = 0.0; grapple_kill_window = 0.0; grapple_kill_target_id = 0; grapple_cooldown = 0.0; hit_invulnerability = 0.0
 	combo = 0; combo_timer = 0.0
-	ammo = MAGAZINE_SIZE; reserve_ammo = START_RESERVE_AMMO; reloading = false; reload_timer = 0.0
+	ammo = active_magazine_capacity(); reserve_ammo = int(weapon_combat_profile.get("starting_reserve", START_RESERVE_AMMO)); reloading = false; reload_timer = 0.0
 	toast_timer = 0.0
 	damage_indicator_timer = 0.0
 	event_messages = ["", "", ""]
@@ -1220,8 +1238,8 @@ func update_ui() -> void:
 	if ui_damage_indicator.visible:
 		var local_damage := camera.global_transform.basis.inverse() * damage_source_direction.normalized()
 		ui_damage_indicator.rotation = atan2(local_damage.x, -local_damage.z)
-	ui_weapon_title.text = "%s　／　性能共通" % str(WeaponCatalogData.weapon(weapon_model_id).get("display_name", weapon_model_id))
-	ui_ammo.text = "装填中…" if reloading else "%02d/%02d  ／  %03d" % [ammo, MAGAZINE_SIZE, reserve_ammo]
+	ui_weapon_title.text = "%s　／　%.0f DMG ・ %.1f/s" % [str(weapon_combat_profile.get("display_name", weapon_model_id)), float(weapon_combat_profile.get("damage", 0)), 1.0 / active_fire_interval()]
+	ui_ammo.text = "装填中…" if reloading else "%02d/%02d  ／  %03d" % [ammo, active_magazine_capacity(), reserve_ammo]
 	ui_ammo.add_theme_color_override("font_color", NEON_PURPLE if reloading else NEON_RED if ammo == 0 else Color("d7e6ff"))
 	ui_status.text="ステージ%d%s　・　%s　・　撃破 %d / %d" % [current_stage,"　ウェーブ %d/2" % stage_wave if current_stage == 2 else "", "初期アリーナ" if current_stage == 1 else "第2アリーナ",kills,stage_target]
 	ui_grapple.text = "⌁"
