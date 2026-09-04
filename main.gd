@@ -507,7 +507,9 @@ func _process(_delta: float) -> void:
 		title_start_button.modulate.a = 0.68 + (sin(Time.get_ticks_msec() * 0.005) + 1.0) * 0.16
 
 func build_weapon() -> void:
-	weapon = Node3D.new(); weapon.name = "PulseRifle"; weapon.position = get_weapon_hip_position(); weapon.rotation_degrees = Vector3(-8, -5, -3); camera.add_child(weapon)
+	# ビューモデルの前方軸をカメラへ一致させ、右下に構えた状態でも銃口が
+	# クロスヘアと敵の方向を向くようにする。
+	weapon = Node3D.new(); weapon.name = "PulseRifle"; weapon.position = get_weapon_hip_position(); weapon.rotation = Vector3.ZERO; camera.add_child(weapon)
 	var receiver := MeshInstance3D.new(); var receiver_mesh := BoxMesh.new(); receiver_mesh.size = Vector3(0.18, 0.16, 0.55); receiver.mesh = receiver_mesh; receiver.material_override = material(Color("4a5053")); weapon.add_child(receiver)
 	var barrel := MeshInstance3D.new(); var barrel_mesh := CylinderMesh.new(); barrel_mesh.top_radius = 0.045; barrel_mesh.bottom_radius = 0.065; barrel_mesh.height = 0.52; barrel_mesh.radial_segments = 6; barrel.mesh = barrel_mesh; barrel.rotation_degrees.x = 90; barrel.position = Vector3(0, 0.015, -0.48); barrel.material_override = material(Color("2d3438")); weapon.add_child(barrel)
 	var rail := MeshInstance3D.new(); var rail_mesh := BoxMesh.new(); rail_mesh.size = Vector3(0.11, 0.045, 0.42); rail.mesh = rail_mesh; rail.position = Vector3(0, 0.11, -0.08); rail.material_override = material(Color("9f9d7c")); weapon.add_child(rail)
@@ -807,11 +809,9 @@ func _physics_process(delta: float) -> void:
 	weapon.position = weapon.position.lerp(weapon_target, minf(1.0, delta * 14.0))
 	# ADS 中は横方向・ロール方向の傾きをゼロにして、照門、照星、
 	# 画面中央のレティクルが一直線になる姿勢へ補間する。
-	var weapon_rotation_target := Vector3(
-		deg_to_rad((-1.0 if aiming else -8.0) - weapon_recoil * 12.0),
-		deg_to_rad(0.0 if aiming else -5.0),
-		deg_to_rad(0.0 if aiming else -3.0)
-	)
+	# モデルはカメラ前方に揃える。反動の上向きピッチだけを残し、腰だめ時の
+	# 固定ヨー／ロールによって銃口が照準から外れないようにする。
+	var weapon_rotation_target := Vector3(deg_to_rad(-weapon_recoil * 12.0), 0.0, 0.0)
 	weapon.rotation = weapon.rotation.lerp(weapon_rotation_target, minf(1.0, delta * 14.0))
 	# ピストルには覗けるアイアンサイトがないため、過度に画面を拡大しない。
 	var target_fov := 64.0 if weapon_model_index == 0 else 74.0
