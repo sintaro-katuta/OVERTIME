@@ -21,12 +21,12 @@ const STAGE_ONE_COVERS := [Vector3(-10, 0, -8), Vector3(9, 0, -3), Vector3(-5, 0
 const STAGE_TWO_COVERS := [Vector3(-12, 0, -11), Vector3(8, 0, -9), Vector3(-5, 0, 6), Vector3(11, 0, 9), Vector3(-15, 0, 2), Vector3(15, 0, 3)]
 const COVER_HALF_EXTENTS := [Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(2.4, 2.4), Vector2(2.4, 2.4)]
 const FALLBACK_SPAWNS := [Vector3(-18, 0, -18), Vector3(18, 0, -18), Vector3(-18, 0, 18), Vector3(18, 0, 18), Vector3(-18, 0, 0), Vector3(18, 0, 0), Vector3(0, 0, -18)]
-const WEAPON_MODEL_PATHS := ["res://assets/viewmodels/assault_rifle_west.glb", "res://assets/viewmodels/scifi_pistol.glb"]
-const WEAPON_MODEL_NAMES := ["Assault Rifle West", "Sci-Fi Pistol"]
 const HEADSHOT_DAMAGE_MULTIPLIER := 3
 const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
 const ProgressionStateData = preload("res://gameplay/progression_state.gd")
+const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
 const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
+const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -35,6 +35,7 @@ var muzzle_light: OmniLight3D
 var weapon_model_node: Node3D
 var muzzle_marker: Marker3D
 var weapon_model_index := 0
+var weapon_model_id := "vanguard_556"
 var weapon_damage_multiplier := 1.0
 var weapon_experience := WeaponExperienceLedger.new()
 var progression = ProgressionStateData.new()
@@ -111,6 +112,7 @@ var preparation_level_label: Label
 var preparation_action_area: CenterContainer
 var preparation_tab := "play"
 var preparation_open := false
+var weapon_selection_view: Control
 var title_background: Node3D
 var title_camera: Camera3D
 var title_layer: CanvasLayer
@@ -330,6 +332,19 @@ func _ready() -> void:
 	preparation_layer.visible = false
 	gameplay_hud.visible = false
 	game_active = false
+	if OS.get_cmdline_user_args().has("--capture-weapons-screen"):
+		call_deferred("_open_weapon_selection_for_capture")
+
+func _open_weapon_selection_for_capture() -> void:
+	# Capture the first-run state independently from any local playtest save.
+	progression = ProgressionStateData.new()
+	start_from_title()
+	var capture_args := OS.get_cmdline_user_args()
+	if capture_args.has("--capture-sidearm-screen") or capture_args.has("--capture-custom-screen"):
+		progression.select_weapon("sidearm_9")
+	select_preparation_tab("weapons")
+	if capture_args.has("--capture-custom-screen"):
+		show_attachment_placeholder("sidearm_9")
 
 func build_world() -> void:
 	var environment := WorldEnvironment.new()
@@ -418,9 +433,9 @@ func build_title_background() -> void:
 	title_camera.position = Vector3(21, 15, 25)
 	title_camera.fov = 67.0
 	title_camera.cull_mask = 2
+	add_child(title_camera)
 	title_camera.look_at(Vector3(0, 1.2, -3.0))
 	title_camera.current = true
-	add_child(title_camera)
 
 func build_title_ui() -> void:
 	title_layer = CanvasLayer.new()
@@ -490,30 +505,32 @@ func build_weapon() -> void:
 	var rail := MeshInstance3D.new(); var rail_mesh := BoxMesh.new(); rail_mesh.size = Vector3(0.11, 0.045, 0.42); rail.mesh = rail_mesh; rail.position = Vector3(0, 0.11, -0.08); rail.material_override = material(Color("9f9d7c")); weapon.add_child(rail)
 	var grip := MeshInstance3D.new(); var grip_mesh := BoxMesh.new(); grip_mesh.size = Vector3(0.11, 0.25, 0.13); grip.mesh = grip_mesh; grip.position = Vector3(0, -0.18, 0.12); grip.rotation_degrees.x = -18; grip.material_override = material(Color("252b2e")); weapon.add_child(grip)
 	muzzle_light = OmniLight3D.new(); muzzle_light.light_color = NEON_CYAN; muzzle_light.light_energy = 0.0; muzzle_light.omni_range = 4.0; muzzle_light.position = Vector3(0, 0.015, -0.74); weapon.add_child(muzzle_light)
-	equip_weapon_model(0)
+	equip_weapon_model("vanguard_556")
 
-func equip_weapon_model(index: int) -> void:
-	if index < 0 or index >= WEAPON_MODEL_PATHS.size(): return
-	weapon_model_index = index
+func equip_weapon_model(weapon_id: String) -> void:
+	var weapon_data := WeaponCatalogData.weapon(weapon_id)
+	if weapon_data.is_empty(): return
+	weapon_model_id = weapon_id
+	weapon_model_index = 1 if weapon_id == "sidearm_9" else 0
 	if is_instance_valid(weapon_model_node): weapon_model_node.queue_free()
-	var model_scene := load(WEAPON_MODEL_PATHS[index]) as PackedScene
+	var model_scene := load(str(weapon_data.model_path)) as PackedScene
 	if not model_scene: return
 	weapon_model_node = model_scene.instantiate() as Node3D
 	if not weapon_model_node: return
 	# GLBモデルの原点は一人称武器用ではないため、腰だめ用に補正する。
-	weapon_model_node.position = Vector3(0.0, -0.07 if index == 0 else -0.10, 0.0)
+	weapon_model_node.position = Vector3(0.0, -0.07 if weapon_id == "vanguard_556" else -0.10, 0.0)
 	# AR は -Z 前方のまま、ピストルは元モデルの横向き軸を補正して
 	# 現在の向きから逆方向へ90度回す。
-	weapon_model_node.rotation_degrees = Vector3(0, 0 if index == 0 else 90, 0)
+	weapon_model_node.rotation_degrees = Vector3(0, 90 if weapon_id == "sidearm_9" else 0, 0)
 	# 元アセットの実寸が大きく異なるため、実プレイ画面で右手の視界を
 	# 占有しすぎない個別スケールにする。
-	weapon_model_node.scale = Vector3.ONE * (1.45 if index == 0 else 0.30)
+	weapon_model_node.scale = Vector3.ONE * (1.45 if weapon_id == "vanguard_556" else 0.30 if weapon_id == "sidearm_9" else 0.50)
 	weapon.add_child(weapon_model_node)
 	# 銃身のローカル軸が異なるため、モデルごとに銃口の位置と向きを明示する。
 	muzzle_marker = Marker3D.new()
 	muzzle_marker.name = "Muzzle"
-	muzzle_marker.position = Vector3(0, 0, -0.72) if index == 0 else Vector3(1.15, 0, 0)
-	muzzle_marker.rotation_degrees = Vector3.ZERO if index == 0 else Vector3(0, -90, 0)
+	muzzle_marker.position = Vector3(1.15, 0, 0) if weapon_id == "sidearm_9" else Vector3(0, 0, -0.72)
+	muzzle_marker.rotation_degrees = Vector3(0, -90, 0) if weapon_id == "sidearm_9" else Vector3.ZERO
 	weapon_model_node.add_child(muzzle_marker)
 	muzzle_light.reparent(muzzle_marker, false)
 	muzzle_light.position = Vector3.ZERO
@@ -645,8 +662,28 @@ func select_preparation_tab(tab: String) -> void:
 	preparation_level_label.visible = tab == "play"
 	match tab:
 		"play": build_preparation_play_tab()
-		"weapons": build_preparation_placeholder("武器", "出撃武器の選択と出撃操作は、武器タブの実装（Issue #4）で追加されます。")
+		"weapons": build_preparation_weapons_tab()
 		"settings": build_preparation_placeholder("設定", "設定項目は後続タスクで追加されます。")
+
+func build_preparation_weapons_tab() -> void:
+	weapon_selection_view = WeaponSelectionViewData.new()
+	weapon_selection_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	weapon_selection_view.custom_requested.connect(show_attachment_placeholder)
+	weapon_selection_view.launch_requested.connect(begin_run_from_preparation)
+	preparation_content.add_child(weapon_selection_view)
+	weapon_selection_view.setup(progression)
+
+func show_attachment_placeholder(weapon_id: String) -> void:
+	for child in preparation_content.get_children():
+		preparation_content.remove_child(child)
+		child.queue_free()
+	var data := progression.weapon_progress(weapon_id)
+	build_preparation_placeholder("カスタム  ／  %s" % weapon_id, "アタッチメント編集は Issue #6 で実装予定です。現在の解放数: %d  ／  装備数: %d" % [progression.unlocked_attachment_ids(weapon_id).size(), (data.equipped_attachment_ids as Array).size()])
+	var back := Button.new()
+	back.text = "武器一覧へ戻る"
+	back.custom_minimum_size = Vector2(240, 44)
+	back.pressed.connect(select_preparation_tab.bind("weapons"))
+	preparation_action_area.add_child(back)
 
 func build_preparation_play_tab() -> void:
 	var view := progression.preparation_view()
@@ -736,10 +773,6 @@ func _input(event: InputEvent) -> void:
 		elif not shop_open and not game_paused: begin_reload()
 		return
 	if not game_active or shop_open or game_paused: return
-	if event is InputEventKey and event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_2:
-		equip_weapon_model(event.keycode - KEY_1)
-		add_time(0.0, "%s に外観変更（性能共通）" % WEAPON_MODEL_NAMES[weapon_model_index])
-		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		player.rotate_y(-event.relative.x * 0.0028)
 		pitch = clamp(pitch - event.relative.y * 0.0028, -1.35, 1.35); camera.rotation.x = pitch
@@ -1007,7 +1040,7 @@ func record_weapon_direct_damage(weapon_index: int, damage: int) -> void:
 	var awarded := weapon_experience.award_direct_damage(weapon_index, damage)
 	progression.award_weapon_direct_damage(progression.selected_weapon_id, damage)
 	if awarded > 0:
-		push_event("%s XP +%d　合計 %d" % [WEAPON_MODEL_NAMES[weapon_index], awarded, weapon_experience.get_experience(weapon_index)])
+		push_event("%s XP +%d　合計 %d" % [str(WeaponCatalogData.weapon(weapon_model_id).get("display_name", weapon_model_id)), awarded, weapon_experience.get_experience(weapon_index)])
 
 func add_time(amount: float, message: String) -> void:
 	time_left=clamp(time_left+amount,0.0,time_cap)
@@ -1116,6 +1149,9 @@ func victory() -> void:
 func restart_run() -> void:
 	set_game_pause(false)
 	game_active = true
+	var selected_id := str(progression.preparation_view().selected_weapon_id)
+	# Only the preparation loadout determines the run's weapon; hot swapping is unavailable.
+	equip_weapon_model(selected_id)
 	shop_open = false
 	has_grapple = false
 	owned_rewards = {}
@@ -1167,7 +1203,7 @@ func update_ui() -> void:
 	if ui_damage_indicator.visible:
 		var local_damage := camera.global_transform.basis.inverse() * damage_source_direction.normalized()
 		ui_damage_indicator.rotation = atan2(local_damage.x, -local_damage.z)
-	ui_weapon_title.text = "%s　／　性能共通" % WEAPON_MODEL_NAMES[weapon_model_index]
+	ui_weapon_title.text = "%s　／　性能共通" % str(WeaponCatalogData.weapon(weapon_model_id).get("display_name", weapon_model_id))
 	ui_ammo.text = "装填中…" if reloading else "%02d/%02d  ／  %03d" % [ammo, MAGAZINE_SIZE, reserve_ammo]
 	ui_ammo.add_theme_color_override("font_color", NEON_PURPLE if reloading else NEON_RED if ammo == 0 else Color("d7e6ff"))
 	ui_status.text="ステージ%d%s　・　%s　・　撃破 %d / %d" % [current_stage,"　ウェーブ %d/2" % stage_wave if current_stage == 2 else "", "初期アリーナ" if current_stage == 1 else "第2アリーナ",kills,stage_target]

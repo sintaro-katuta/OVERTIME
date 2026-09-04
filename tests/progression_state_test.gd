@@ -11,6 +11,16 @@ func _init() -> void:
 	assert(ProgressionConfigData.player_xp_required(3) == 331)
 	var state = ProgressionStateData.new()
 	assert(state.preparation_view().selected_weapon_id == "")
+	var initial_view := state.preparation_view()
+	var initially_unlocked := 0
+	for weapon in initial_view.weapons:
+		if bool(weapon.progress.unlocked):
+			initially_unlocked += 1
+	assert(initially_unlocked == 2, "Only the two initial weapons may be selectable")
+	assert(not state.select_weapon("kestrel_762"), "A locked weapon must not become the deployment weapon")
+	assert(state.select_weapon("vanguard_556"))
+	assert(state.preparation_view().selected_weapon_id == "vanguard_556")
+	state.has_selected_weapon = false
 	state.award_player_xp(300 + 315 + 331)
 	assert(state.player_level == 4)
 	assert(state.award_weapon_direct_damage("vanguard_556", 2000) == 2000)
@@ -19,6 +29,7 @@ func _init() -> void:
 	state.award_player_xp(10000000)
 	assert(state.player_level == 50)
 	assert(state.available_unlock_keys() == 7)
+	assert(not state.is_weapon_unlocked("kestrel_762"))
 	assert(state.unlock_weapon("kestrel_762"))
 	assert(state.select_weapon("kestrel_762"))
 	assert(state.preparation_view().selected_weapon_id == "kestrel_762")
