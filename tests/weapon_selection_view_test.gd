@@ -25,7 +25,7 @@ func _init() -> void:
 		if button.text == "出撃":
 			has_launch = true
 			assert(button.disabled)
-		if button.text == "カスタム":
+		if button.text == "アタッチメント編集":
 			has_custom = true
 	assert(locked == 7)
 	assert(selectable == 2)

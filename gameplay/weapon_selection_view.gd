@@ -89,9 +89,9 @@ func refresh() -> void:
 	equip.pressed.connect(_equip_focused)
 	action_row.add_child(equip)
 	var custom := Button.new()
-	custom.text = "カスタム"
+	custom.text = "アタッチメント編集"
 	custom.disabled = not bool(weapon_state.unlocked)
-	custom.custom_minimum_size = Vector2(120, 44)
+	custom.custom_minimum_size = Vector2(190, 44)
 	custom.pressed.connect(custom_requested.emit.bind(focused_weapon_id))
 	action_row.add_child(custom)
 	var launch := Button.new()

@@ -28,6 +28,7 @@ const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
 const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
 const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd")
 const AttachmentEditorViewData = preload("res://gameplay/attachment_editor_view.gd")
+const WeaponLevelViewData = preload("res://gameplay/weapon_level_view.gd")
 
 var player: CharacterBody3D
 var camera: Camera3D
@@ -115,6 +116,7 @@ var preparation_tab := "play"
 var preparation_open := false
 var weapon_selection_view: Control
 var attachment_editor_view: Control
+var weapon_level_view: Control
 var title_background: Node3D
 var title_camera: Camera3D
 var title_layer: CanvasLayer
@@ -686,8 +688,19 @@ func show_attachment_placeholder(weapon_id: String) -> void:
 	attachment_editor_view = AttachmentEditorViewData.new()
 	attachment_editor_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	attachment_editor_view.close_requested.connect(select_preparation_tab.bind("weapons"))
+	attachment_editor_view.level_requested.connect(show_weapon_level_view)
 	preparation_content.add_child(attachment_editor_view)
 	attachment_editor_view.setup(progression, weapon_id)
+
+func show_weapon_level_view(weapon_id: String) -> void:
+	for child in preparation_content.get_children():
+		preparation_content.remove_child(child)
+		child.queue_free()
+	weapon_level_view = WeaponLevelViewData.new()
+	weapon_level_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	weapon_level_view.close_requested.connect(show_attachment_placeholder.bind(weapon_id))
+	preparation_content.add_child(weapon_level_view)
+	weapon_level_view.setup(progression, weapon_id)
 
 func build_preparation_play_tab() -> void:
 	var view := progression.preparation_view()
