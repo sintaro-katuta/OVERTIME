@@ -3,6 +3,8 @@
 class_name WeaponCatalog
 extends RefCounted
 
+const VisualProfile = preload("res://gameplay/weapon_visual_profile.gd")
+
 const WEAPON_IDS := [
 	"vanguard_556", "kestrel_762", "bastion_556", "sentinel_762", "sidearm_9",
 	"viper_9", "longshot_338", "marksman_65", "breach_12",
@@ -15,13 +17,7 @@ const SKINS_BY_WEAPON := {
 		"display_name": "Obsidian Circuit",
 		"unlock_player_level": 2,
 		"model_path": "res://assets/styloo_guns/ak47.glb",
-		"hip_position": Vector3(0.30, -0.24, -0.52),
-		"ads_position": Vector3(0.02, -0.05, -0.42),
-		"model_position": Vector3(0.0, -0.10, 0.0),
-		"model_rotation_degrees": Vector3(0.0, 180.0, 0.0),
-		"model_scale": 0.50,
-		"muzzle_position": Vector3(0.78, 0.0, 0.0),
-		"muzzle_rotation_degrees": Vector3(0.0, -90.0, 0.0),
+
 	}],
 }
 
@@ -39,7 +35,9 @@ static func weapon(weapon_id: String) -> Dictionary:
 static func skins_for(weapon_id: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for entry in SKINS_BY_WEAPON.get(weapon_id, []):
-		result.append((entry as Dictionary).duplicate(true))
+		var visual := VisualProfile.for_model(str(entry.model_path))
+		visual.merge((entry as Dictionary).duplicate(true), true)
+		result.append(visual)
 	return result
 
 static func skin(weapon_id: String, skin_id: String) -> Dictionary:

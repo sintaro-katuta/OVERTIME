@@ -21,10 +21,12 @@ const STAGE_ONE_COVERS := [Vector3(-10, 0, -8), Vector3(9, 0, -3), Vector3(-5, 0
 const STAGE_TWO_COVERS := [Vector3(-12, 0, -11), Vector3(8, 0, -9), Vector3(-5, 0, 6), Vector3(11, 0, 9), Vector3(-15, 0, 2), Vector3(15, 0, 3)]
 const COVER_HALF_EXTENTS := [Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(1.5, 1.5), Vector2(2.4, 2.4), Vector2(2.4, 2.4)]
 const FALLBACK_SPAWNS := [Vector3(-18, 0, -18), Vector3(18, 0, -18), Vector3(-18, 0, 18), Vector3(18, 0, 18), Vector3(-18, 0, 0), Vector3(18, 0, 0), Vector3(0, 0, -18)]
-const HEADSHOT_DAMAGE_MULTIPLIER := 3
+const STANDARD_ENEMY_HEALTH := 100
+const RANGER_ENEMY_HEALTH := 150
 const WeaponExperienceLedger = preload("res://gameplay/weapon_experience.gd")
 const ProgressionStateData = preload("res://gameplay/progression_state.gd")
 const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
+const WeaponVisualProfileData = preload("res://gameplay/weapon_visual_profile.gd")
 const WeaponCombatProfileData = preload("res://gameplay/weapon_combat_profile.gd")
 const TitleBackgroundScene = preload("res://gameplay/title_background.tscn")
 const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd")
@@ -49,6 +51,7 @@ var weapon_damage_multiplier := 1.0
 var weapon_experience := WeaponExperienceLedger.new()
 var progression = ProgressionStateData.new()
 var weapon_recoil := 0.0
+var camera_recoil := Vector2.ZERO
 var weapon_bob := 0.0
 var aiming := false
 var ammo := MAGAZINE_SIZE
@@ -74,6 +77,8 @@ var shop_open := false
 var has_grapple := false
 var dash_cooldown := 0.0
 var shot_cooldown := 0.0
+var burst_remaining := 0
+var automatic_reload_enabled := true
 var grapple_cooldown := 0.0
 var grapple_time := 0.0
 var grapple_target: Enemy
@@ -141,7 +146,7 @@ class Enemy extends CharacterBody3D:
 	var main: Node3D
 	var speed := 3.0
 	var is_ranger := false
-	var health := 2
+	var health := STANDARD_ENEMY_HEALTH
 	var pulse := 0.0
 	var dead := false
 	var attack_cooldown := 0.8
@@ -197,13 +202,10 @@ class Enemy extends CharacterBody3D:
 		queue_free()
 	func take_damage(amount: int, headshot: bool, air_kill: bool) -> bool:
 		if dead: return false
-		if headshot:
-			die(true, air_kill)
-			return true
 		health -= amount
 		main.on_enemy_damaged(health)
 		if health <= 0:
-			die(false, air_kill)
+			die(headshot, air_kill)
 			return true
 		return false
 
@@ -233,32 +235,33 @@ class PlayerBullet extends MeshInstance3D:
 	var velocity := Vector3.ZERO
 	var weapon_index := 0
 	var direct_damage := 1
-	var lifetime := 0.70
+	var profile: Dictionary
+	var distance_travelled := 0.0
 	func _physics_process(delta: float) -> void:
-		lifetime -= delta
-		if lifetime <= 0.0:
-			queue_free()
-			return
-		var next_position := global_position + velocity * delta
+		var acceleration := Vector3.DOWN * float(profile.gravity)
+		var displacement := velocity * delta + acceleration * delta * delta * 0.5
+		velocity += acceleration * delta
+		var remaining := float(profile.maximum_range) - distance_travelled
+		displacement = displacement.limit_length(maxf(0.0, remaining))
+		var next_position := global_position + displacement
 		var query := PhysicsRayQueryParameters3D.create(global_position, next_position)
 		query.exclude = [main.player.get_rid()]
 		query.collision_mask = 1 | 2
 		var hit := main.get_world_3d().direct_space_state.intersect_ray(query)
 		if not hit.is_empty():
+			distance_travelled += global_position.distance_to(hit.position)
 			global_position = hit.position
 			var collider = hit.collider
 			if collider is Enemy:
 				var is_head: bool = hit.position.y > collider.global_position.y + main.HEADSHOT_HEIGHT
-				var effective_damage: int = direct_damage
-				if is_head:
-					effective_damage *= int(main.HEADSHOT_DAMAGE_MULTIPLIER)
-				# Award the calculated hit damage before applying it. This preserves
-				# overkill damage, while non-weapon damage never enters this path.
+				var effective_damage := WeaponCombatProfileData.damage_at_distance(profile, direct_damage, distance_travelled, is_head)
 				main.record_weapon_direct_damage(weapon_index, effective_damage)
 				collider.take_damage(effective_damage, is_head, false)
 			queue_free()
 			return
+		distance_travelled += displacement.length()
 		global_position = next_position
+		if distance_travelled >= float(profile.maximum_range) - 0.0001: queue_free()
 
 class ShotTracer extends MeshInstance3D:
 	var lifetime := 0.055
@@ -534,7 +537,14 @@ func equip_weapon_model(weapon_id: String) -> void:
 	weapon_model_id = weapon_id
 	weapon_combat_profile = WeaponCombatProfileData.from_catalog(weapon_id)
 	weapon_skin_id = progression.selected_skin_id_for(weapon_id)
-	weapon_visual_data = WeaponCatalogData.skin(weapon_id, weapon_skin_id)
+	var skin_data := WeaponCatalogData.skin(weapon_id, weapon_skin_id)
+	var visual_path := str(skin_data.get("model_path", weapon_data.model_path))
+	weapon_visual_data = WeaponVisualProfileData.for_model(visual_path)
+	weapon_visual_data.merge(skin_data, true)
+	shot_cooldown = 0.0
+	burst_remaining = 0
+	camera_recoil = Vector2.ZERO
+	weapon_recoil = 0.0
 	weapon_model_index = 1 if weapon_id == "sidearm_9" else 0
 	if is_instance_valid(weapon_model_node): weapon_model_node.queue_free()
 	var model_path := str(weapon_visual_data.get("model_path", weapon_data.model_path))
@@ -559,6 +569,11 @@ func equip_weapon_model(weapon_id: String) -> void:
 	weapon_model_node.add_child(muzzle_marker)
 	muzzle_light.reparent(muzzle_marker, false)
 	muzzle_light.position = Vector3.ZERO
+	weapon.position = get_weapon_hip_position()
+	weapon.rotation = Vector3.ZERO
+	aiming = false
+	camera.fov = 82.0
+	camera.rotation = Vector3(pitch, 0, 0)
 	for child in weapon.get_children():
 		if child is MeshInstance3D and child != weapon_model_node: child.visible = false
 
@@ -692,7 +707,7 @@ func select_preparation_tab(tab: String) -> void:
 	match tab:
 		"play": build_preparation_play_tab()
 		"weapons": build_preparation_weapons_tab()
-		"settings": build_preparation_placeholder("設定", "設定項目は後続タスクで追加されます。")
+		"settings": build_preparation_settings_tab()
 
 func build_preparation_weapons_tab() -> void:
 	weapon_selection_view = WeaponSelectionViewData.new()
@@ -766,6 +781,13 @@ func build_preparation_play_tab() -> void:
 	preparation_action_area.add_child(launch)
 	launch.grab_focus()
 
+func build_preparation_settings_tab() -> void:
+	var toggle := CheckButton.new()
+	toggle.text = "弾切れ時に自動リロード"
+	toggle.button_pressed = automatic_reload_enabled
+	toggle.toggled.connect(func(enabled: bool): automatic_reload_enabled = enabled)
+	preparation_content.add_child(toggle)
+
 func build_preparation_placeholder(title_text: String, body_text: String) -> void:
 	var title := Label.new()
 	title.text = title_text
@@ -818,7 +840,7 @@ func _input(event: InputEvent) -> void:
 	if not game_active or shop_open or game_paused: return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		player.rotate_y(-event.relative.x * 0.0028)
-		pitch = clamp(pitch - event.relative.y * 0.0028, -1.35, 1.35); camera.rotation.x = pitch
+		pitch = clamp(pitch - event.relative.y * 0.0028, -1.35, 1.35); camera.rotation.x = clampf(pitch + camera_recoil.x, -1.35, 1.35)
 	if event.is_action_pressed("shoot"): shoot()
 	if event.is_action_pressed("grapple"): grapple()
 
@@ -826,29 +848,27 @@ func _physics_process(delta: float) -> void:
 	if not game_active or shop_open or game_paused: return
 	shot_cooldown = max(0.0, shot_cooldown-delta); dash_cooldown=max(0.0,dash_cooldown-delta); grapple_cooldown=max(0.0,grapple_cooldown-delta); grapple_kill_window=max(0.0,grapple_kill_window-delta); hit_invulnerability=max(0.0,hit_invulnerability-delta)
 	weapon_recoil = max(0.0, weapon_recoil - delta * 7.0)
+	camera_recoil = camera_recoil.move_toward(Vector2.ZERO, delta * 0.10)
+	camera.rotation.x = clampf(pitch + camera_recoil.x, -1.35, 1.35)
+	camera.rotation.y = camera_recoil.y
 	aiming = Input.is_action_pressed("aim")
 	weapon_bob += Vector2(player.velocity.x, player.velocity.z).length() * delta * 0.55
 	var bob_offset := Vector3(sin(weapon_bob) * 0.012, abs(cos(weapon_bob * 2.0)) * 0.01, 0) if not aiming else Vector3.ZERO
 	var weapon_target := (get_weapon_ads_position() if aiming else get_weapon_hip_position()) + bob_offset + Vector3(0, 0, weapon_recoil * 0.18)
-	weapon.position = weapon.position.lerp(weapon_target, minf(1.0, delta * 14.0))
+	var pose_speed := get_weapon_hip_position().distance_to(get_weapon_ads_position()) / float(weapon_combat_profile.ads.transition_seconds)
+	weapon.position = weapon.position.move_toward(weapon_target, delta * pose_speed)
 	# ADS 中は横方向・ロール方向の傾きをゼロにして、照門、照星、
 	# 画面中央のレティクルが一直線になる姿勢へ補間する。
 	# モデルはカメラ前方に揃える。反動の上向きピッチだけを残し、腰だめ時の
 	# 固定ヨー／ロールによって銃口が照準から外れないようにする。
-	var weapon_rotation_target := Vector3(deg_to_rad(-weapon_recoil * 12.0), 0.0, 0.0)
+	var weapon_rotation_target := Vector3(deg_to_rad(weapon_recoil * 12.0), 0.0, 0.0)
 	weapon.rotation = weapon.rotation.lerp(weapon_rotation_target, minf(1.0, delta * 14.0))
 	# ピストルには覗けるアイアンサイトがないため、過度に画面を拡大しない。
-	var target_fov := 64.0 if weapon_model_index == 0 else 74.0
-	camera.fov = lerpf(camera.fov, target_fov if aiming else 82.0, minf(1.0, delta * 13.0))
+	var ads_data: Dictionary = weapon_combat_profile.ads
+	var target_fov := float(ads_data.fov)
+	camera.fov = move_toward(camera.fov, target_fov if aiming else 82.0, absf(82.0 - target_fov) * delta / float(ads_data.transition_seconds))
 	muzzle_light.light_energy = max(0.0, muzzle_light.light_energy - delta * 26.0)
-	if reloading:
-		reload_timer -= delta
-		if reload_timer <= 0.0:
-			reloading = false
-			if game_active:
-				var loaded := mini(active_magazine_capacity() - ammo, reserve_ammo)
-				ammo += loaded; reserve_ammo -= loaded
-				add_time(0.0, "リロード完了")
+	update_reload(delta)
 	if grapple_kill_window <= 0.0: grapple_kill_target_id = 0
 	combo_timer = max(0.0, combo_timer-delta)
 	hit_marker_timer = max(0.0, hit_marker_timer-delta)
@@ -869,56 +889,90 @@ func _physics_process(delta: float) -> void:
 		if grapple_time > 0.0: finish_grapple(false)
 		var input := Input.get_vector("move_left","move_right","move_forward","move_back")
 		var direction := (player.global_transform.basis * Vector3(input.x,0,input.y)); direction.y=0; direction=direction.normalized()
-		var speed := 6.2 if aiming else 8.0
+		var speed := 8.0 * float(weapon_combat_profile.ads.move_speed_multiplier) if aiming else 8.0
 		if Input.is_action_just_pressed("dash") and dash_cooldown <= 0 and direction.length() > 0:
 			speed = dash_speed; dash_cooldown=dash_cooldown_duration; add_time(0.0,"ダッシュ")
 		player.velocity.x = direction.x * speed; player.velocity.z = direction.z * speed
 		if not player.is_on_floor(): player.velocity.y -= 22.0*delta
 		if Input.is_action_just_pressed("jump") and player.is_on_floor(): player.velocity.y=8.5
 	player.move_and_slide()
-	if Input.is_action_pressed("shoot") and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED: shoot()
+	if burst_remaining > 0 or (Input.is_action_pressed("shoot") and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED): shoot(false)
+	if ammo == 0 and shot_cooldown <= 0.0 and automatic_reload_enabled and bool(weapon_combat_profile.automatic_reload): begin_reload()
 	update_ui()
 
-func shoot() -> void:
-	if shot_cooldown > 0: return
-	if reloading: return
+func shoot(trigger_pressed: bool = true) -> void:
+	if not game_active or game_paused or shop_open or shot_cooldown > 0.0: return
+	var mode := str(weapon_combat_profile.fire_mode)
+	if burst_remaining == 0 and mode != "full_auto" and not trigger_pressed: return
+	if reloading:
+		if not bool(weapon_combat_profile.shoot_after_shell_loaded) or ammo <= 0: return
+		reloading = false
+		reload_timer = 0.0
 	if ammo <= 0:
-		shot_cooldown=0.2
-		add_time(0.0, "弾倉が空です　Rでリロード")
+		burst_remaining = 0
+		if automatic_reload_enabled and bool(weapon_combat_profile.automatic_reload): begin_reload()
 		return
-	shot_cooldown = active_fire_interval() / fire_rate_multiplier; ammo -= 1
-	weapon_recoil = min(1.0, weapon_recoil + active_recoil_impulse()); muzzle_light.light_energy = 7.0
-	spawn_player_bullet()
+	if mode == "burst_3" and burst_remaining == 0:
+		burst_remaining = int(weapon_combat_profile.burst_size)
+	shot_cooldown = maxf(active_fire_interval(), float(weapon_combat_profile.bolt_cycle_seconds)) / fire_rate_multiplier
+	ammo -= 1
+	if burst_remaining > 0:
+		burst_remaining -= 1
+		if burst_remaining == 0 or ammo == 0:
+			burst_remaining = 0
+			shot_cooldown = maxf(shot_cooldown, float(weapon_combat_profile.burst_interval) / fire_rate_multiplier)
+	weapon_recoil = min(1.0, weapon_recoil + active_recoil_impulse())
+	muzzle_light.light_energy = 7.0
+	var pellets := int(weapon_combat_profile.pellets)
+	for pellet in pellets: spawn_player_bullet(pellet, pellets)
+	var kick: Vector2 = weapon_combat_profile.camera_kick
+	camera_recoil += Vector2(deg_to_rad(kick.x), deg_to_rad(kick.y) * (-1.0 if rng.randf() < 0.5 else 1.0))
+	camera.rotation.x = clampf(pitch + camera_recoil.x, -1.35, 1.35)
+	camera.rotation.y = camera_recoil.y
 
-func spawn_player_bullet() -> void:
+func spawn_player_bullet(pellet_index: int = 0, pellet_count: int = 1) -> void:
 	if not is_instance_valid(muzzle_marker): return
-	# まずカメラ中央（クロスヘア）の狙い地点を求め、そこへ銃口から実弾を飛ばす。
-	# これにより、弾は見た目には銃口から出つつ、必ずクロスヘアの中心へ収束する。
 	var ray_from := camera.global_position
 	var ray_direction := -camera.global_transform.basis.z
-	var aim_query := PhysicsRayQueryParameters3D.create(ray_from, ray_from + ray_direction * 70.0)
+	var maximum_range := float(weapon_combat_profile.maximum_range)
+	var aim_query := PhysicsRayQueryParameters3D.create(ray_from, ray_from + ray_direction * maximum_range)
 	aim_query.exclude = [player.get_rid()]
 	aim_query.collision_mask = 1 | 2
 	var aim_hit := get_world_3d().direct_space_state.intersect_ray(aim_query)
-	var aim_point: Vector3 = aim_hit.position if not aim_hit.is_empty() else ray_from + ray_direction * 70.0
-	var direction := aim_point - muzzle_marker.global_position
+	var aim_point: Vector3 = aim_hit.position if not aim_hit.is_empty() else ray_from + ray_direction * maximum_range
+	# Check camera-to-muzzle obstruction so a barrel poking through cover cannot fire through it.
+	var muzzle_query := PhysicsRayQueryParameters3D.create(ray_from, muzzle_marker.global_position)
+	muzzle_query.exclude = [player.get_rid()]
+	muzzle_query.collision_mask = 1 | 2
+	var obstructed := get_world_3d().direct_space_state.intersect_ray(muzzle_query)
+	var origin := muzzle_marker.global_position
+	if not obstructed.is_empty():
+		origin = ray_from
+		aim_point = obstructed.position
+	var direction := aim_point - origin
 	if direction.length_squared() < 0.001: return
+	var spread_multiplier := float(weapon_combat_profile.ads.spread_multiplier) if aiming else 1.0
+	direction = WeaponCombatProfileData.pellet_direction(direction.normalized(), pellet_index, pellet_count, spread_multiplier)
+	if pellet_count == 1:
+		var radius := tan(deg_to_rad(float(weapon_combat_profile.hip_spread_degrees)) * spread_multiplier) * sqrt(rng.randf())
+		direction = WeaponCombatProfileData.spread_direction(direction, radius, rng.randf() * TAU)
 	var bullet := PlayerBullet.new()
 	bullet.main = self
 	bullet.weapon_index = weapon_model_index
+	bullet.profile = weapon_combat_profile.duplicate(true)
 	bullet.direct_damage = get_weapon_direct_damage(weapon_model_index)
-	bullet.global_position = muzzle_marker.global_position
-	bullet.velocity = direction.normalized() * 96.0
+	bullet.position = origin
+	bullet.velocity = direction * float(weapon_combat_profile.muzzle_velocity)
 	var mesh := CylinderMesh.new()
 	mesh.top_radius = 0.025; mesh.bottom_radius = 0.045; mesh.height = 0.42; mesh.radial_segments = 6
 	bullet.mesh = mesh
 	bullet.material_override = material(NEON_CYAN, 10.0)
-	bullet.look_at(bullet.global_position + direction, Vector3.UP)
+	player_bullet_root.add_child(bullet)
+	bullet.look_at(bullet.global_position + direction, Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > 0.99 else Vector3.UP)
 	bullet.rotate_object_local(Vector3.RIGHT, -PI * 0.5)
 	var light := OmniLight3D.new()
 	light.light_color = NEON_CYAN; light.light_energy = 1.8; light.omni_range = 1.3
 	bullet.add_child(light)
-	player_bullet_root.add_child(bullet)
 
 func grapple() -> void:
 	if not has_grapple or grapple_cooldown > 0.0: return
@@ -943,7 +997,7 @@ func finish_grapple(reached_target: bool) -> void:
 	grapple_target = null
 
 func spawn_enemy(pos: Vector3, ranger := false) -> void:
-	var e := Enemy.new(); e.main=self; e.position=pos; e.is_ranger=ranger; e.health=3 if ranger else 2; e.speed=2.35 if ranger else 3.0; e.collision_layer=2; e.collision_mask=1; e.attack_cooldown=rng.randf_range(0.7,1.6)
+	var e := Enemy.new(); e.main=self; e.position=pos; e.is_ranger=ranger; e.health=RANGER_ENEMY_HEALTH if ranger else STANDARD_ENEMY_HEALTH; e.speed=2.35 if ranger else 3.0; e.collision_layer=2; e.collision_mask=1; e.attack_cooldown=rng.randf_range(0.7,1.6)
 	var collider := CollisionShape3D.new(); var capsule := CapsuleShape3D.new(); capsule.radius=0.45; capsule.height=1.8; collider.shape=capsule; collider.position.y=0.9; e.add_child(collider)
 	var body := MeshInstance3D.new(); var torso := BoxMesh.new(); torso.size=Vector3(0.7,0.72,0.34); body.mesh=torso; body.position.y=1.0; body.material_override=material(Color("4b4741")); e.body_mesh=body; e.add_child(body)
 	for side in [-1.0, 1.0]:
@@ -988,13 +1042,28 @@ func collect_ammo_cell(amount: int) -> void:
 	if reserve_ammo > before: add_time(0.0, "弾薬セル  +%d" % (reserve_ammo - before))
 
 func begin_reload() -> void:
-	if reloading or ammo >= active_magazine_capacity(): return
-	if reserve_ammo <= 0:
-		add_time(0.0, "予備弾薬がありません")
-		return
+	if reloading or ammo >= active_magazine_capacity() or reserve_ammo <= 0: return
+	burst_remaining = 0
+	if str(weapon_combat_profile.reload_style) == "magazine" and bool(weapon_combat_profile.discard_remaining):
+		ammo = 0
 	reloading = true
 	reload_timer = active_reload_duration()
 	add_time(0.0, "リロード中")
+
+func update_reload(delta: float) -> void:
+	if not reloading: return
+	reload_timer -= delta
+	while reloading and reload_timer <= 0.0:
+		var per_shell := str(weapon_combat_profile.reload_style) == "tube_per_shell"
+		var loaded := mini(1 if per_shell else active_magazine_capacity() - ammo, reserve_ammo)
+		ammo += loaded
+		reserve_ammo -= loaded
+		if per_shell and ammo < active_magazine_capacity() and reserve_ammo > 0:
+			reload_timer += active_reload_duration()
+		else:
+			reloading = false
+			reload_timer = 0.0
+			add_time(0.0, "リロード完了")
 
 func start_stage(stage: int) -> void:
 	current_stage=stage; kills=0; stage_target=STAGE_ONE_KILLS if stage==1 else STAGE_TWO_KILLS
@@ -1006,7 +1075,10 @@ func start_stage(stage: int) -> void:
 	player.position = stage_origin + STAGE_START_LOCAL
 	player.velocity = Vector3.ZERO
 	pitch = 0.0
-	camera.rotation.x = pitch
+	camera_recoil = Vector2.ZERO
+	weapon_recoil = 0.0
+	weapon.rotation = Vector3.ZERO
+	camera.rotation = Vector3.ZERO
 	time_cap=STAGE_ONE_CAP if stage==1 else STAGE_TWO_CAP
 	if stage == 1: time_left=min(time_left,time_cap)
 	else: time_left=min(time_left+5.0,time_cap)
@@ -1258,7 +1330,7 @@ func update_ui() -> void:
 	ui_crosshair.text = "×" if hit_marker_timer > 0.0 else "+"
 	ui_crosshair.add_theme_color_override("font_color", Color("ffdc6b") if hit_marker_timer > 0.0 else Color.WHITE)
 	# AR はアイアンサイトだけで狙う。サイトを持たないピストルは中央照準を残す。
-	var using_iron_sight := aiming and weapon_model_index == 0
+	var using_iron_sight := aiming and weapon_model_id == "vanguard_556" and weapon_skin_id == "default"
 	ui_crosshair.visible = game_active and not using_iron_sight
 	ui_reload_prompt.visible = not reloading and ammo <= 0 and game_active
 	ui_reload_prompt.text = "［R］ リロード"

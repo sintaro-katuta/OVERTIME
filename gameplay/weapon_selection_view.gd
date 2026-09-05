@@ -153,7 +153,7 @@ func _performance_values(data: Dictionary) -> Array[float]:
 	]
 
 func _fire_mode_label(fire_mode: String) -> String:
-	return {"full_auto": "フルオート", "semi_auto": "セミオート", "burst": "3点バースト", "bolt_action": "ボルトアクション", "pump_action": "ポンプアクション"}.get(fire_mode, fire_mode)
+	return {"full_auto": "フルオート", "semi_auto": "セミオート", "burst_3": "3点バースト", "bolt_action": "ボルトアクション", "pump_action": "ポンプアクション"}.get(fire_mode, fire_mode)
 
 func _label(text_value: String, font_size: int, color: Color) -> Label:
 	var result := Label.new()
