@@ -24,23 +24,18 @@ func _init() -> void:
 			selectable += 1
 		if button.text == "出撃":
 			has_launch = true
-			assert(button.disabled)
 		if button.text == "アタッチメント編集":
 			has_custom = true
 	assert(locked == 7)
 	assert(selectable == 2)
-	assert(has_launch)
+	assert(not has_launch)
 	assert(has_custom)
 
 	assert(state.select_weapon("sidearm_9"))
 	view.refresh()
 	await process_frame
-	var selected := false
 	for button in _descendants(view, Button):
-		if button.text == "出撃":
-			selected = true
-			assert(not button.disabled)
-	assert(selected)
+		assert(button.text != "出撃")
 	view.queue_free()
 	quit()
 

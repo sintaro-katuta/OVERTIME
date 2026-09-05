@@ -3,7 +3,6 @@ class_name WeaponSelectionView
 extends HBoxContainer
 
 signal custom_requested(weapon_id: String)
-signal launch_requested
 
 const WeaponCatalogData = preload("res://gameplay/weapon_catalog.gd")
 const ProgressionConfigData = preload("res://gameplay/progression_config.gd")
@@ -106,12 +105,6 @@ func refresh() -> void:
 	custom.custom_minimum_size = Vector2(190, 44)
 	custom.pressed.connect(custom_requested.emit.bind(focused_weapon_id))
 	action_row.add_child(custom)
-	var launch := Button.new()
-	launch.text = "出撃"
-	launch.disabled = str(view.selected_weapon_id).is_empty()
-	launch.custom_minimum_size = Vector2(150, 44)
-	launch.pressed.connect(launch_requested.emit)
-	action_row.add_child(launch)
 
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(370, 0)

@@ -31,6 +31,9 @@ const WeaponSelectionViewData = preload("res://gameplay/weapon_selection_view.gd
 const AttachmentEditorViewData = preload("res://gameplay/attachment_editor_view.gd")
 const WeaponLevelViewData = preload("res://gameplay/weapon_level_view.gd")
 
+const RunResultViewData = preload("res://gameplay/run_result_view.gd")
+var run_result_view: CanvasLayer
+
 var player: CharacterBody3D
 var camera: Camera3D
 var weapon: Node3D
@@ -335,6 +338,10 @@ func _ready() -> void:
 	build_player()
 	build_ui()
 	build_preparation_ui()
+	run_result_view = RunResultViewData.new()
+	add_child(run_result_view)
+	run_result_view.retry_requested.connect(restart_run)
+	run_result_view.preparation_requested.connect(show_preparation_screen)
 	build_title_background()
 	build_title_ui()
 	preparation_layer.visible = false
@@ -691,7 +698,6 @@ func build_preparation_weapons_tab() -> void:
 	weapon_selection_view = WeaponSelectionViewData.new()
 	weapon_selection_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	weapon_selection_view.custom_requested.connect(show_attachment_placeholder)
-	weapon_selection_view.launch_requested.connect(begin_run_from_preparation)
 	preparation_content.add_child(weapon_selection_view)
 	weapon_selection_view.setup(progression)
 
@@ -751,12 +757,14 @@ func build_preparation_play_tab() -> void:
 	selected_weapon.add_theme_font_size_override("font_size", 20)
 	selected_weapon.add_theme_color_override("font_color", NEON_CYAN)
 	preparation_content.add_child(selected_weapon)
-	var launch_hint := Label.new()
-	launch_hint.text = "出撃は［武器］タブの「出撃」操作から開始します。"
-	launch_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	launch_hint.add_theme_font_size_override("font_size", 16)
-	launch_hint.add_theme_color_override("font_color", Color("c7d2e0"))
-	preparation_content.add_child(launch_hint)
+	var launch := Button.new()
+	launch.text = "出撃"
+	launch.custom_minimum_size = Vector2(280, 52)
+	launch.focus_mode = Control.FOCUS_ALL
+	launch.add_theme_font_size_override("font_size", 20)
+	launch.pressed.connect(begin_run_from_preparation)
+	preparation_action_area.add_child(launch)
+	launch.grab_focus()
 
 func build_preparation_placeholder(title_text: String, body_text: String) -> void:
 	var title := Label.new()
@@ -775,6 +783,9 @@ func build_preparation_placeholder(title_text: String, body_text: String) -> voi
 	preparation_content.add_child(body)
 
 func show_preparation_screen() -> void:
+	set_game_pause(false)
+	run_result_view.visible = false
+	shop.visible = false
 	select_preparation_tab("play")
 	preparation_open = true
 	game_active = false
@@ -784,7 +795,8 @@ func show_preparation_screen() -> void:
 	preparation_layer.visible = true
 
 func begin_run_from_preparation() -> void:
-	# Issue #4 owns the UI action that calls this once a weapon has been selected.
+	if not preparation_open or preparation_tab != "play":
+		return
 	if str(progression.preparation_view().selected_weapon_id).is_empty():
 		select_preparation_tab("weapons")
 		return
@@ -800,8 +812,8 @@ func _input(event: InputEvent) -> void:
 		if game_active and not shop_open: set_game_pause(not game_paused)
 		return
 	if event is InputEventKey and event.keycode == KEY_R and event.pressed and not event.echo:
-		if not game_active: restart_run()
-		elif not shop_open and not game_paused: begin_reload()
+		if run_result_view.visible: restart_run()
+		elif game_active and not shop_open and not game_paused: begin_reload()
 		return
 	if not game_active or shop_open or game_paused: return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -1172,7 +1184,23 @@ func apply_reward(id: String) -> void:
 			dash_cooldown_duration *= 0.6
 
 func end_run() -> void:
-	set_game_pause(false); reloading=false; reload_timer=0.0; damage_indicator_timer=0.0; ui_damage_indicator.visible=false; clear_projectiles(); clear_pickups(); game_active=false; Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE); push_event("時間切れ　／　Rで再挑戦", 999.0); update_ui()
+	if not game_active: return
+	finish_run("時間切れ", "ステージ%d　／　撃破 %d" % [current_stage, kills])
+
+func finish_run(title: String, detail: String) -> void:
+	set_game_pause(false)
+	game_active = false
+	shop_open = false
+	shop.visible = false
+	reloading = false
+	reload_timer = 0.0
+	damage_indicator_timer = 0.0
+	player.velocity = Vector3.ZERO
+	clear_projectiles()
+	clear_pickups()
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	update_ui()
+	run_result_view.show_result(title, detail)
 
 func on_player_hit(source_direction := Vector3.ZERO) -> void:
 	if not game_active or hit_invulnerability > 0.0: return
@@ -1186,11 +1214,14 @@ func on_player_hit(source_direction := Vector3.ZERO) -> void:
 	if time_left <= 0.0: end_run()
 
 func victory() -> void:
+	if not game_active: return
 	var earned_xp := progression.award_stage_completion(current_stage, time_left)
 	progression.save_to_file()
-	set_game_pause(false); reloading=false; reload_timer=0.0; damage_indicator_timer=0.0; push_event("オーバータイム達成　／　ステージXP +%d　Lv.%d　／　Rで再挑戦" % [earned_xp, progression.player_level], 999.0); update_ui()
+	finish_run("オーバータイム達成", "ステージXP +%d　／　PLAYER LEVEL %d" % [earned_xp, progression.player_level])
 
 func restart_run() -> void:
+	run_result_view.visible = false
+	shop.visible = false
 	set_game_pause(false)
 	game_active = true
 	var selected_id := str(progression.preparation_view().selected_weapon_id)
