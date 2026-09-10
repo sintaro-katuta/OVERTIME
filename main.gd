@@ -75,6 +75,12 @@ var stage_target := STAGE_ONE_KILLS
 var game_active := true
 var shop_open := false
 var has_grapple := false
+var skills = preload("res://gameplay/skills/skill_loadout.gd").new()
+var control_settings = preload("res://gameplay/control_settings.gd").new()
+var sfx = preload("res://gameplay/audio/game_audio.gd").new()
+var slide_controller = preload("res://gameplay/player_slide.gd").new()
+var stage_cleared := false
+const STAGE_NAMES := ["初期アリーナ", "第2アリーナ"]
 var dash_cooldown := 0.0
 var shot_cooldown := 0.0
 var burst_remaining := 0
@@ -103,8 +109,6 @@ var ui_grapple: Label
 var ui_damage_indicator: Label
 var ui_reload_prompt: Label
 var ui_event_labels: Array[Label] = []
-var ui_time_ring: Control
-var ui_minimap: Control
 var time_fill_style: StyleBoxFlat
 var toast_panel: PanelContainer
 var toast_timer := 0.0
@@ -153,11 +157,14 @@ class Enemy extends CharacterBody3D:
 	var charge_time := 0.0
 	var last_position := Vector3.ZERO
 	var stuck_time := 0.0
+	var visual: Node3D
 	var body_mesh: MeshInstance3D
 	var head_mesh: MeshInstance3D
 	var eye_light: OmniLight3D
 	func _physics_process(delta: float) -> void:
 		if dead or not is_instance_valid(main.player): return
+		if not main.game_active or main.game_paused or main.shop_open: return
+		if main.grapple_time > 0 and main.grapple_target == self: return
 		pulse += delta
 		var target: Vector3 = main.player.global_position
 		var direction: Vector3 = target - global_position
@@ -172,8 +179,9 @@ class Enemy extends CharacterBody3D:
 			if stuck_time > 0.45:
 				move_direction = move_direction.rotated(Vector3.UP, 0.9 if get_instance_id() % 2 == 0 else -0.9)
 			velocity = move_direction * speed
-			move_and_slide()
 		else: velocity = Vector3.ZERO
+		velocity += main.skills.enemy_force(self)
+		if velocity.length() > 0: move_and_slide()
 		last_position = global_position
 		attack_cooldown -= delta
 		if charge_time > 0.0:
@@ -225,6 +233,9 @@ class Projectile extends Area3D:
 		if not main.get_world_3d().direct_space_state.intersect_ray(wall_query).is_empty():
 			queue_free()
 			return
+		if main.skills.shield_blocks(global_position, next_position):
+			queue_free()
+			return
 		global_position = next_position
 		if is_instance_valid(main.player) and global_position.distance_to(main.player.global_position + Vector3(0, 0.55, 0)) < 0.72:
 			main.on_player_hit(-velocity.normalized())
@@ -256,7 +267,7 @@ class PlayerBullet extends MeshInstance3D:
 				var is_head: bool = hit.position.y > collider.global_position.y + main.HEADSHOT_HEIGHT
 				var effective_damage := WeaponCombatProfileData.damage_at_distance(profile, direct_damage, distance_travelled, is_head)
 				main.record_weapon_direct_damage(weapon_index, effective_damage)
-				collider.take_damage(effective_damage, is_head, false)
+				collider.take_damage(effective_damage, is_head, not main.player.is_on_floor())
 			queue_free()
 			return
 		distance_travelled += displacement.length()
@@ -332,6 +343,8 @@ class AmmoPickup extends Node3D:
 			queue_free()
 
 func _ready() -> void:
+	control_settings.load_settings()
+	automatic_reload_enabled = control_settings.automatic_reload
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	rng.randomize()
 	# Progression is independent from a run, so a retry never erases it.
@@ -339,7 +352,10 @@ func _ready() -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 	build_world()
 	build_player()
+	add_child(sfx)
+	sfx.setup(self)
 	build_ui()
+	skills.setup(self)
 	build_preparation_ui()
 	run_result_view = RunResultViewData.new()
 	add_child(run_result_view)
@@ -446,6 +462,7 @@ func build_player() -> void:
 	camera = Camera3D.new(); camera.name = "Camera3D"; camera.position = Vector3(0,0.6,0); camera.current = false; camera.fov = 82; camera.near = 0.03; player.add_child(camera)
 	build_weapon()
 	add_child(player)
+	slide_controller.setup(player, camera)
 
 func build_title_background() -> void:
 	title_background = TitleBackgroundScene.instantiate()
@@ -591,41 +608,19 @@ func get_weapon_ads_position() -> Vector3:
 
 func build_ui() -> void:
 	var layer := CanvasLayer.new(); add_child(layer)
-	var root := Control.new(); root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); root.mouse_filter = Control.MOUSE_FILTER_IGNORE; layer.add_child(root)
+	var root := preload("res://gameplay/combat_hud.gd").new(); layer.add_child(root)
 	gameplay_hud = root
-	var minimap_frame := PanelContainer.new(); minimap_frame.set_anchors_preset(Control.PRESET_TOP_LEFT); minimap_frame.position=Vector2(24,20); minimap_frame.size=Vector2(184,184); minimap_frame.add_theme_stylebox_override("panel",hud_style(Color("82939a"),Color("10171ee8"))); root.add_child(minimap_frame)
-	ui_minimap = MiniMap.new(); ui_minimap.main=self; ui_minimap.custom_minimum_size=Vector2(156,156); ui_minimap.mouse_filter=Control.MOUSE_FILTER_IGNORE; minimap_frame.add_child(ui_minimap)
-	var life_panel := PanelContainer.new(); life_panel.set_anchors_preset(Control.PRESET_CENTER_TOP); life_panel.position=Vector2(-190,98); life_panel.size=Vector2(380,78); life_panel.add_theme_stylebox_override("panel",hud_style(NEON_CYAN)); root.add_child(life_panel)
-	var life_content := VBoxContainer.new(); life_content.add_theme_constant_override("separation",2); life_panel.add_child(life_content)
-	var life_title := Label.new(); life_title.text="残り時間"; life_title.add_theme_font_size_override("font_size",12); life_title.add_theme_color_override("font_color",Color("9caeca")); life_content.add_child(life_title)
-	ui_time = Label.new(); ui_time.add_theme_font_size_override("font_size",34); ui_time.add_theme_color_override("font_color",NEON_CYAN); life_content.add_child(ui_time)
-	ui_time_bar = ProgressBar.new(); ui_time_bar.show_percentage=false; ui_time_bar.custom_minimum_size=Vector2(0,8); time_fill_style=StyleBoxFlat.new(); time_fill_style.bg_color=NEON_CYAN; time_fill_style.corner_radius_top_left=3; time_fill_style.corner_radius_top_right=3; time_fill_style.corner_radius_bottom_left=3; time_fill_style.corner_radius_bottom_right=3; ui_time_bar.add_theme_stylebox_override("fill",time_fill_style); ui_time_bar.add_theme_stylebox_override("background",hud_style(Color("273b59"),Color("101827"))); life_content.add_child(ui_time_bar)
-	var objective_panel := PanelContainer.new(); objective_panel.set_anchors_preset(Control.PRESET_CENTER_TOP); objective_panel.position=Vector2(-190,20); objective_panel.size=Vector2(380,70); objective_panel.add_theme_stylebox_override("panel",hud_style(NEON_PURPLE)); root.add_child(objective_panel)
-	var objective_content := VBoxContainer.new(); objective_content.alignment=BoxContainer.ALIGNMENT_CENTER; objective_panel.add_child(objective_content)
-	var objective_title := Label.new(); objective_title.text="現在の目標"; objective_title.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; objective_title.add_theme_font_size_override("font_size",11); objective_title.add_theme_color_override("font_color",Color("9caeca")); objective_content.add_child(objective_title)
-	ui_status = Label.new(); ui_status.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui_status.add_theme_font_size_override("font_size",18); ui_status.add_theme_color_override("font_color",Color("f0f6ff")); objective_content.add_child(ui_status)
-	toast_panel = PanelContainer.new(); toast_panel.visible=false; root.add_child(toast_panel)
-	ui_combo = Label.new(); toast_panel.add_child(ui_combo)
-	var ammo_panel := PanelContainer.new(); ammo_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT); ammo_panel.position=Vector2(-270,-125); ammo_panel.size=Vector2(246,88); ammo_panel.add_theme_stylebox_override("panel",hud_style(Color("d7e6ff"))); root.add_child(ammo_panel)
-	var ammo_content := VBoxContainer.new(); ammo_panel.add_child(ammo_content)
-	ui_weapon_title = Label.new(); ui_weapon_title.text="パルスライフル  ／  弾薬"; ui_weapon_title.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT; ui_weapon_title.add_theme_font_size_override("font_size",11); ui_weapon_title.add_theme_color_override("font_color",Color("9caeca")); ammo_content.add_child(ui_weapon_title)
-	ui_ammo = Label.new(); ui_ammo.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT; ui_ammo.add_theme_font_size_override("font_size",28); ui_ammo.add_theme_color_override("font_color",Color("d7e6ff")); ammo_content.add_child(ui_ammo)
-	var ability_panel := PanelContainer.new(); ability_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT); ability_panel.position=Vector2(-354,-125); ability_panel.size=Vector2(72,88); ability_panel.add_theme_stylebox_override("panel",hud_style(NEON_CYAN)); root.add_child(ability_panel)
-	var ability_content := VBoxContainer.new(); ability_content.alignment=BoxContainer.ALIGNMENT_CENTER; ability_panel.add_child(ability_content)
-	ui_grapple = Label.new(); ui_grapple.text="⌁"; ui_grapple.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui_grapple.add_theme_font_size_override("font_size",30); ability_content.add_child(ui_grapple)
-	var ability_key := Label.new(); ability_key.text="Q"; ability_key.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ability_key.add_theme_font_size_override("font_size",16); ability_key.add_theme_color_override("font_color",Color("f0f6ff")); ability_content.add_child(ability_key)
-	ui_crosshair = Label.new(); ui_crosshair.text = "+"; ui_crosshair.set_anchors_preset(Control.PRESET_CENTER); ui_crosshair.position=Vector2(-13,-20); ui_crosshair.size=Vector2(26,40); ui_crosshair.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui_crosshair.add_theme_font_size_override("font_size",30); ui_crosshair.add_theme_color_override("font_color",Color.WHITE); root.add_child(ui_crosshair)
-	ui_time_ring = TimeRing.new(); ui_time_ring.visible=false; ui_time_ring.set_anchors_preset(Control.PRESET_CENTER); ui_time_ring.position=Vector2(-42,-42); ui_time_ring.size=Vector2(84,84); ui_time_ring.mouse_filter=Control.MOUSE_FILTER_IGNORE; root.add_child(ui_time_ring)
-	ui_damage_indicator = Label.new(); ui_damage_indicator.visible=false; ui_damage_indicator.text="▲"; ui_damage_indicator.set_anchors_preset(Control.PRESET_CENTER); ui_damage_indicator.position=Vector2(-18,-120); ui_damage_indicator.size=Vector2(36,36); ui_damage_indicator.pivot_offset=ui_damage_indicator.size*0.5; ui_damage_indicator.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui_damage_indicator.add_theme_font_size_override("font_size",30); ui_damage_indicator.add_theme_color_override("font_color",NEON_RED); root.add_child(ui_damage_indicator)
-	var event_stack := VBoxContainer.new(); event_stack.set_anchors_preset(Control.PRESET_CENTER); event_stack.position=Vector2(-180,34); event_stack.size=Vector2(360,118); event_stack.alignment=BoxContainer.ALIGNMENT_CENTER; event_stack.mouse_filter=Control.MOUSE_FILTER_IGNORE; root.add_child(event_stack)
-	ui_reload_prompt = Label.new(); ui_reload_prompt.visible=false; ui_reload_prompt.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; ui_reload_prompt.add_theme_font_size_override("font_size",18); ui_reload_prompt.add_theme_color_override("font_color",Color("f1e4ba")); event_stack.add_child(ui_reload_prompt)
-	for index in 3:
-		var event_label := Label.new(); event_label.visible=false; event_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; event_label.add_theme_font_size_override("font_size",15); event_label.add_theme_color_override("font_color",Color("f0f6ff")); event_stack.add_child(event_label); ui_event_labels.append(event_label)
+	root.setup(self)
 	pause_panel = PanelContainer.new(); pause_panel.visible=false; pause_panel.set_anchors_preset(Control.PRESET_CENTER); pause_panel.position=Vector2(-210,-110); pause_panel.size=Vector2(420,220); pause_panel.mouse_filter=Control.MOUSE_FILTER_STOP
 	var pause_style := StyleBoxFlat.new(); pause_style.bg_color=Color("0b1120f5"); pause_style.border_color=NEON_CYAN; pause_style.set_border_width_all(2); pause_style.corner_radius_top_left=10; pause_style.corner_radius_top_right=10; pause_style.corner_radius_bottom_left=10; pause_style.corner_radius_bottom_right=10; pause_panel.add_theme_stylebox_override("panel",pause_style); root.add_child(pause_panel)
 	var pause_content := VBoxContainer.new(); pause_content.alignment=BoxContainer.ALIGNMENT_CENTER; pause_content.add_theme_constant_override("separation",14); pause_panel.add_child(pause_content)
 	var pause_title := Label.new(); pause_title.text="ポーズ中"; pause_title.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; pause_title.add_theme_font_size_override("font_size",32); pause_title.add_theme_color_override("font_color",NEON_CYAN); pause_content.add_child(pause_title)
-	var pause_text := Label.new(); pause_text.text="ESC でゲームに戻る\nR：リロード　Q：グラップル"; pause_text.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; pause_text.add_theme_font_size_override("font_size",17); pause_content.add_child(pause_text)
+	var pause_text := Label.new(); pause_text.text="Esc でゲームに戻る\n操作キーは準備画面の「設定」で変更できます"; pause_text.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER; pause_text.add_theme_font_size_override("font_size",17); pause_content.add_child(pause_text)
+	var preparation_button := Button.new()
+	preparation_button.text = "ゲーム開始準備へ戻る"
+	preparation_button.custom_minimum_size.y = 48
+	preparation_button.pressed.connect(show_preparation_screen)
+	pause_content.add_child(preparation_button)
 	shop = PanelContainer.new(); shop.visible = false; shop.set_anchors_preset(Control.PRESET_CENTER); shop.position = Vector2(-280,-180); shop.size = Vector2(560,360); shop.mouse_filter = Control.MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new(); style.bg_color = Color("111a2bf2"); style.border_color = NEON_CYAN; style.set_border_width_all(2); style.corner_radius_top_left=10; style.corner_radius_top_right=10; style.corner_radius_bottom_left=10; style.corner_radius_bottom_right=10; shop.add_theme_stylebox_override("panel",style); root.add_child(shop)
 	var content := VBoxContainer.new(); content.add_theme_constant_override("separation",12); shop.add_child(content)
@@ -635,67 +630,15 @@ func build_ui() -> void:
 		var reward_button := Button.new(); reward_button.add_theme_font_size_override("font_size",16); reward_button.pressed.connect(select_reward.bind(index)); content.add_child(reward_button); reward_buttons.append(reward_button)
 
 func build_preparation_ui() -> void:
-	preparation_layer = CanvasLayer.new()
-	preparation_layer.layer = 2
-	add_child(preparation_layer)
-	var overlay := ColorRect.new()
-	overlay.color = Color("071019f2")
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-	preparation_layer.add_child(overlay)
-	preparation_panel = PanelContainer.new()
-	preparation_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 36)
-	preparation_panel.add_theme_stylebox_override("panel", hud_style(NEON_CYAN, Color("0d1724f5")))
-	overlay.add_child(preparation_panel)
-	preparation_level_label = Label.new()
-	preparation_level_label.position = Vector2(62, 52)
-	preparation_level_label.size = Vector2(280, 40)
-	preparation_level_label.add_theme_font_size_override("font_size", 21)
-	preparation_level_label.add_theme_color_override("font_color", Color("f0f6ff"))
-	overlay.add_child(preparation_level_label)
-	preparation_action_area = CenterContainer.new()
-	preparation_action_area.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	preparation_action_area.offset_top = -148
-	preparation_action_area.offset_bottom = -68
-	overlay.add_child(preparation_action_area)
-	var layout := VBoxContainer.new()
-	layout.add_theme_constant_override("separation", 20)
-	preparation_panel.add_child(layout)
-	var header := VBoxContainer.new()
-	header.add_theme_constant_override("separation", 8)
-	layout.add_child(header)
-	var title := Label.new()
-	title.text = "RUN PREPARATION"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 32)
-	title.add_theme_color_override("font_color", NEON_CYAN)
-	header.add_child(title)
-	var tab_row := HBoxContainer.new()
-	tab_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	tab_row.add_theme_constant_override("separation", 12)
-	header.add_child(tab_row)
-	for tab_data in [["play", "プレイ"], ["weapons", "武器"], ["settings", "設定"]]:
-		var tab_button := Button.new()
-		tab_button.custom_minimum_size = Vector2(150, 42)
-		tab_button.text = tab_data[1]
-		tab_button.add_theme_font_size_override("font_size", 18)
-		tab_button.pressed.connect(select_preparation_tab.bind(tab_data[0]))
-		tab_row.add_child(tab_button)
-		preparation_tab_buttons[tab_data[0]] = tab_button
-	var divider := HSeparator.new()
-	layout.add_child(divider)
-	preparation_content = VBoxContainer.new()
-	preparation_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	preparation_content.alignment = BoxContainer.ALIGNMENT_CENTER
-	preparation_content.add_theme_constant_override("separation", 14)
-	layout.add_child(preparation_content)
-	select_preparation_tab("play")
+	preload("res://gameplay/ui/preparation_screen.gd").build(self)
 
 func select_preparation_tab(tab: String) -> void:
 	preparation_tab = tab
 	for key in preparation_tab_buttons:
 		var tab_button := preparation_tab_buttons[key] as Button
-		tab_button.disabled = key == tab
+		tab_button.disabled = false
+		var design=preload("res://gameplay/ui/interface_theme.gd")
+		tab_button.add_theme_stylebox_override("normal",design.plate(Color("32524f") if key==tab else Color("17272d"),design.ACCENT if key==tab else Color("34474c")))
 		tab_button.add_theme_color_override("font_color", NEON_CYAN if key == tab else Color("c7d2e0"))
 	for child in preparation_content.get_children():
 		preparation_content.remove_child(child)
@@ -703,11 +646,17 @@ func select_preparation_tab(tab: String) -> void:
 	for child in preparation_action_area.get_children():
 		preparation_action_area.remove_child(child)
 		child.queue_free()
-	preparation_level_label.visible = tab == "play"
+	preparation_level_label.visible = false
 	match tab:
 		"play": build_preparation_play_tab()
 		"weapons": build_preparation_weapons_tab()
+		"skills":
+			var view = preload("res://gameplay/skills/skill_selection_view.gd").new()
+			preparation_content.add_child(view)
+			view.setup(self)
 		"settings": build_preparation_settings_tab()
+	preparation_content.modulate.a=0.0
+	var transition:=create_tween();transition.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS);transition.tween_property(preparation_content,"modulate:a",1.0,.14)
 
 func build_preparation_weapons_tab() -> void:
 	weapon_selection_view = WeaponSelectionViewData.new()
@@ -738,55 +687,12 @@ func show_weapon_level_view(weapon_id: String) -> void:
 	weapon_level_view.setup(progression, weapon_id)
 
 func build_preparation_play_tab() -> void:
-	var view := progression.preparation_view()
-	preparation_level_label.text = "PLAYER LEVEL  %02d" % int(view.player_level)
-	var preview := PreparationCharacterPreview.new()
-	preview.custom_minimum_size = Vector2(220, 250)
-	preview.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	preparation_content.add_child(preview)
-	var operator_label := Label.new()
-	operator_label.text = "OPERATOR  //  PLAYER"
-	operator_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	operator_label.add_theme_font_size_override("font_size", 16)
-	operator_label.add_theme_color_override("font_color", Color("9caeca"))
-	preparation_content.add_child(operator_label)
-	var selected_weapon_id := str(view.selected_weapon_id)
-	if selected_weapon_id.is_empty():
-		var choose_weapon := Button.new()
-		choose_weapon.text = "武器を選択"
-		choose_weapon.custom_minimum_size = Vector2(280, 52)
-		choose_weapon.focus_mode = Control.FOCUS_ALL
-		choose_weapon.add_theme_font_size_override("font_size", 20)
-		choose_weapon.pressed.connect(select_preparation_tab.bind("weapons"))
-		preparation_action_area.add_child(choose_weapon)
-		choose_weapon.grab_focus()
-		return
-	var weapon_name := selected_weapon_id
-	for weapon_data in view.weapons:
-		if str(weapon_data.id) == selected_weapon_id:
-			weapon_name = str(weapon_data.display_name)
-			break
-	var selected_weapon := Label.new()
-	selected_weapon.text = "選択中の武器  //  %s" % weapon_name
-	selected_weapon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	selected_weapon.add_theme_font_size_override("font_size", 20)
-	selected_weapon.add_theme_color_override("font_color", NEON_CYAN)
-	preparation_content.add_child(selected_weapon)
-	var launch := Button.new()
-	launch.text = "出撃"
-	launch.custom_minimum_size = Vector2(280, 52)
-	launch.focus_mode = Control.FOCUS_ALL
-	launch.add_theme_font_size_override("font_size", 20)
-	launch.pressed.connect(begin_run_from_preparation)
-	preparation_action_area.add_child(launch)
-	launch.grab_focus()
+	preload("res://gameplay/ui/preparation_screen.gd").play(self)
 
 func build_preparation_settings_tab() -> void:
-	var toggle := CheckButton.new()
-	toggle.text = "弾切れ時に自動リロード"
-	toggle.button_pressed = automatic_reload_enabled
-	toggle.toggled.connect(func(enabled: bool): automatic_reload_enabled = enabled)
-	preparation_content.add_child(toggle)
+	var settings_view=preload("res://gameplay/control_settings_view.gd").new()
+	preparation_content.add_child(settings_view)
+	settings_view.setup(self)
 
 func build_preparation_placeholder(title_text: String, body_text: String) -> void:
 	var title := Label.new()
@@ -805,6 +711,9 @@ func build_preparation_placeholder(title_text: String, body_text: String) -> voi
 	preparation_content.add_child(body)
 
 func show_preparation_screen() -> void:
+	sfx.reset_gameplay()
+	sfx.emit("ui_back")
+	skills.clear_stage()
 	set_game_pause(false)
 	run_result_view.visible = false
 	shop.visible = false
@@ -822,6 +731,9 @@ func begin_run_from_preparation() -> void:
 	if str(progression.preparation_view().selected_weapon_id).is_empty():
 		select_preparation_tab("weapons")
 		return
+	if not skills.valid_selection():
+		select_preparation_tab("skills")
+		return
 	preparation_open = false
 	preparation_layer.visible = false
 	gameplay_hud.visible = true
@@ -833,19 +745,25 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed and not event.echo:
 		if game_active and not shop_open: set_game_pause(not game_paused)
 		return
-	if event is InputEventKey and event.keycode == KEY_R and event.pressed and not event.echo:
-		if run_result_view.visible: restart_run()
-		elif game_active and not shop_open and not game_paused: begin_reload()
+	if skills.is_rewinding(): return
+	if event.is_action_pressed("reload"):
+		if game_active and not shop_open and not game_paused:
+			if reserve_ammo <= 0: sfx.emit("skill_error")
+			begin_reload()
 		return
 	if not game_active or shop_open or game_paused: return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		player.rotate_y(-event.relative.x * 0.0028)
-		pitch = clamp(pitch - event.relative.y * 0.0028, -1.35, 1.35); camera.rotation.x = clampf(pitch + camera_recoil.x, -1.35, 1.35)
+		player.rotate_y(-event.relative.x * 0.0028 * control_settings.sensitivity)
+		pitch = clamp(pitch - event.relative.y * 0.0028 * control_settings.sensitivity, -1.35, 1.35); camera.rotation.x = clampf(pitch + camera_recoil.x, -1.35, 1.35)
 	if event.is_action_pressed("shoot"): shoot()
-	if event.is_action_pressed("grapple"): grapple()
+	if event.is_action_pressed("grapple"): skills.activate_slot(0)
+	if event.is_action_pressed("skill_2"): skills.activate_slot(1)
 
 func _physics_process(delta: float) -> void:
 	if not game_active or shop_open or game_paused: return
+	var was_rewinding: bool = skills.is_rewinding()
+	skills.tick(delta)
+	slide_controller.tick(delta)
 	shot_cooldown = max(0.0, shot_cooldown-delta); dash_cooldown=max(0.0,dash_cooldown-delta); grapple_cooldown=max(0.0,grapple_cooldown-delta); grapple_kill_window=max(0.0,grapple_kill_window-delta); hit_invulnerability=max(0.0,hit_invulnerability-delta)
 	weapon_recoil = max(0.0, weapon_recoil - delta * 7.0)
 	camera_recoil = camera_recoil.move_toward(Vector2.ZERO, delta * 0.10)
@@ -879,28 +797,33 @@ func _physics_process(delta: float) -> void:
 		combo = 0
 	time_left -= delta
 	if time_left <= 0.0: end_run(); return
-	if grapple_time > 0.0 and is_instance_valid(grapple_target) and not grapple_target.dead:
-		grapple_time -= delta
-		var pull := grapple_target.global_position + Vector3(0, 0.85, 0) - player.global_position
-		player.velocity = pull.normalized() * GRAPPLE_SPEED
-		if pull.length() < 1.8: finish_grapple(true)
-		elif grapple_time <= 0.0: finish_grapple(false)
+	if was_rewinding or skills.is_rewinding():
+		update_ui()
+		return
+	var input := Input.get_vector("move_left","move_right","move_forward","move_back")
+	var direction := (player.global_transform.basis * Vector3(input.x,0,input.y)); direction.y=0; direction=direction.normalized()
+	var speed := 8.0 * float(weapon_combat_profile.ads.move_speed_multiplier) if aiming else 8.0
+	if Input.is_action_just_pressed("slide") and slide_controller.start(): push_event("スライディング")
+	if Input.is_action_just_pressed("dash") and not slide_controller.low and dash_cooldown <= 0 and direction.length() > 0:
+		speed = dash_speed; dash_cooldown=dash_cooldown_duration; add_time(0.0,"ダッシュ")
+		sfx.emit("dash")
+	if slide_controller.active:
+		slide_controller.move_slide()
 	else:
-		if grapple_time > 0.0: finish_grapple(false)
-		var input := Input.get_vector("move_left","move_right","move_forward","move_back")
-		var direction := (player.global_transform.basis * Vector3(input.x,0,input.y)); direction.y=0; direction=direction.normalized()
-		var speed := 8.0 * float(weapon_combat_profile.ads.move_speed_multiplier) if aiming else 8.0
-		if Input.is_action_just_pressed("dash") and dash_cooldown <= 0 and direction.length() > 0:
-			speed = dash_speed; dash_cooldown=dash_cooldown_duration; add_time(0.0,"ダッシュ")
+		if slide_controller.low: speed=minf(speed,3.0)
 		player.velocity.x = direction.x * speed; player.velocity.z = direction.z * speed
-		if not player.is_on_floor(): player.velocity.y -= 22.0*delta
-		if Input.is_action_just_pressed("jump") and player.is_on_floor(): player.velocity.y=8.5
+	if not player.is_on_floor(): player.velocity.y -= 22.0*delta
+	if Input.is_action_just_pressed("jump") and player.is_on_floor() and slide_controller.can_stand():
+		slide_controller.stop();player.velocity.y=8.5
+		sfx.emit("jump")
 	player.move_and_slide()
+	slide_controller.after_move()
 	if burst_remaining > 0 or (Input.is_action_pressed("shoot") and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED): shoot(false)
 	if ammo == 0 and shot_cooldown <= 0.0 and automatic_reload_enabled and bool(weapon_combat_profile.automatic_reload): begin_reload()
 	update_ui()
 
 func shoot(trigger_pressed: bool = true) -> void:
+	if skills.is_rewinding(): return
 	if not game_active or game_paused or shop_open or shot_cooldown > 0.0: return
 	var mode := str(weapon_combat_profile.fire_mode)
 	if burst_remaining == 0 and mode != "full_auto" and not trigger_pressed: return
@@ -914,7 +837,7 @@ func shoot(trigger_pressed: bool = true) -> void:
 		return
 	if mode == "burst_3" and burst_remaining == 0:
 		burst_remaining = int(weapon_combat_profile.burst_size)
-	shot_cooldown = maxf(active_fire_interval(), float(weapon_combat_profile.bolt_cycle_seconds)) / fire_rate_multiplier
+	shot_cooldown = maxf(active_fire_interval(), float(weapon_combat_profile.bolt_cycle_seconds)) / (fire_rate_multiplier * skills.fire_rate_bonus())
 	ammo -= 1
 	if burst_remaining > 0:
 		burst_remaining -= 1
@@ -984,7 +907,7 @@ func grapple() -> void:
 		add_time(0.0, "グラップル：照準内に敵が必要です")
 		return
 	grapple_target = hit.collider
-	grapple_time = 0.9
+	grapple_time = 1.3
 	grapple_cooldown = 2.5
 	add_time(0.0, "グラップル起動")
 
@@ -1042,6 +965,7 @@ func collect_ammo_cell(amount: int) -> void:
 	if reserve_ammo > before: add_time(0.0, "弾薬セル  +%d" % (reserve_ammo - before))
 
 func begin_reload() -> void:
+	if skills.is_rewinding(): return
 	if reloading or ammo >= active_magazine_capacity() or reserve_ammo <= 0: return
 	burst_remaining = 0
 	if str(weapon_combat_profile.reload_style) == "magazine" and bool(weapon_combat_profile.discard_remaining):
@@ -1066,6 +990,8 @@ func update_reload(delta: float) -> void:
 			add_time(0.0, "リロード完了")
 
 func start_stage(stage: int) -> void:
+	skills.clear_stage()
+	slide_controller.reset()
 	current_stage=stage; kills=0; stage_target=STAGE_ONE_KILLS if stage==1 else STAGE_TWO_KILLS
 	spawned_enemies=0; stage_wave=1; wave_two_spawned=false
 	stage_origin = STAGE_ORIGINS[stage - 1]
@@ -1182,6 +1108,7 @@ func push_event(message: String, duration := 2.7) -> void:
 	event_timers[0] = duration
 
 func open_shop() -> void:
+	skills.clear_stage()
 	var earned_xp := progression.award_stage_completion(current_stage, time_left)
 	progression.save_to_file()
 	set_game_pause(false); reloading=false; reload_timer=0.0; toast_timer=0.0; toast_panel.visible=false; event_messages=["", "", ""]; event_timers=[0.0, 0.0, 0.0]; clear_projectiles(); clear_pickups(); shop_open=true; shop.visible=true; roll_reward_choices(); Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
@@ -1197,7 +1124,6 @@ func get_reward_pool(premium: bool) -> Array[Dictionary]:
 		]
 	else:
 		pool = [
-			{"id":"grapple", "name":"グラップル", "description":"敵へ高速接近。直後のキルで+2.0秒。", "cost":0.0},
 			{"id":"overclock", "name":"パルス・オーバークロック", "description":"パルスライフルの連射速度を25%上昇。", "cost":0.0},
 			{"id":"time_siphon", "name":"タイムサイフォン", "description":"すべての通常キルの時間報酬が+0.25秒。", "cost":0.0},
 			{"id":"ammo_rig", "name":"拡張アモリグ", "description":"予備弾薬の上限+36、即座に弾薬+24。", "cost":0.0}
@@ -1241,7 +1167,6 @@ func select_reward(index: int) -> void:
 
 func apply_reward(id: String) -> void:
 	match id:
-		"grapple": has_grapple = true
 		"overclock": fire_rate_multiplier *= 1.25
 		"time_siphon": kill_time_bonus += 0.25
 		"ammo_rig":
@@ -1260,6 +1185,7 @@ func end_run() -> void:
 	finish_run("時間切れ", "ステージ%d　／　撃破 %d" % [current_stage, kills])
 
 func finish_run(title: String, detail: String) -> void:
+	skills.clear_stage()
 	set_game_pause(false)
 	game_active = false
 	shop_open = false
@@ -1292,6 +1218,11 @@ func victory() -> void:
 	finish_run("オーバータイム達成", "ステージXP +%d　／　PLAYER LEVEL %d" % [earned_xp, progression.player_level])
 
 func restart_run() -> void:
+	if not skills.valid_selection():
+		show_preparation_screen()
+		select_preparation_tab("skills")
+		return
+	skills.reset_run()
 	run_result_view.visible = false
 	shop.visible = false
 	set_game_pause(false)
@@ -1300,7 +1231,7 @@ func restart_run() -> void:
 	# Only the preparation loadout determines the run's weapon; hot swapping is unavailable.
 	equip_weapon_model(selected_id)
 	shop_open = false
-	has_grapple = false
+	has_grapple = skills.selected.has("grapple")
 	owned_rewards = {}
 	weapon_damage_multiplier = 1.0
 	weapon_experience.reset()
@@ -1322,18 +1253,16 @@ func restart_run() -> void:
 	start_stage(1)
 
 func update_ui() -> void:
-	ui_time.text="%05.1f 秒" % time_left
-	ui_time.add_theme_color_override("font_color", NEON_RED if time_left < 8.0 else NEON_CYAN)
+	ui_time.text="%.1f 秒" % time_left
+	ui_time.add_theme_color_override("font_color", NEON_RED if time_left < 8.0 and not stage_cleared else NEON_CYAN)
 	ui_time_bar.value = clampf(time_left / maxf(time_cap, 0.01) * 100.0, 0.0, 100.0)
-	time_fill_style.bg_color = NEON_RED if time_left < 8.0 else Color("ffb84d") if time_left < 15.0 else NEON_CYAN
+	time_fill_style.bg_color = NEON_CYAN if stage_cleared else NEON_RED if time_left < 8.0 else Color("ffb84d") if time_left < 15.0 else NEON_CYAN
 	toast_panel.visible = false
 	ui_crosshair.text = "×" if hit_marker_timer > 0.0 else "+"
 	ui_crosshair.add_theme_color_override("font_color", Color("ffdc6b") if hit_marker_timer > 0.0 else Color.WHITE)
 	# AR はアイアンサイトだけで狙う。サイトを持たないピストルは中央照準を残す。
 	var using_iron_sight := aiming and weapon_model_id == "vanguard_556" and weapon_skin_id == "default"
 	ui_crosshair.visible = game_active and not using_iron_sight
-	ui_reload_prompt.visible = not reloading and ammo <= 0 and game_active
-	ui_reload_prompt.text = "［R］ リロード"
 	for index in 3:
 		var event_label := ui_event_labels[index]
 		var event_time := event_timers[index]
@@ -1341,19 +1270,16 @@ func update_ui() -> void:
 		if event_label.visible:
 			event_label.text = event_messages[index]
 			event_label.modulate = Color(1, 1, 1, minf(1.0, event_time / 1.2))
-	# 中央リングもARのアイアンサイトを隠すため、上部の残り時間表示に集約する。
-	ui_time_ring.visible = time_left <= 10.0 and game_active and not using_iron_sight
-	if ui_time_ring.visible:
-		ui_time_ring.remaining_fraction = clampf(time_left / 10.0, 0.0, 1.0)
-		ui_time_ring.queue_redraw()
 	ui_damage_indicator.visible = damage_indicator_timer > 0.0
 	if ui_damage_indicator.visible:
 		var local_damage := camera.global_transform.basis.inverse() * damage_source_direction.normalized()
 		ui_damage_indicator.rotation = atan2(local_damage.x, -local_damage.z)
-	ui_weapon_title.text = "%s　／　%.0f DMG ・ %.1f/s" % [str(weapon_combat_profile.get("display_name", weapon_model_id)), float(weapon_combat_profile.get("damage", 0)), 1.0 / active_fire_interval()]
-	ui_ammo.text = "装填中…" if reloading else "%02d/%02d  ／  %03d" % [ammo, active_magazine_capacity(), reserve_ammo]
+	ui_weapon_title.text = str(weapon_combat_profile.get("display_name", weapon_model_id))
+	ui_ammo.text = "%02d" % ammo
 	ui_ammo.add_theme_color_override("font_color", NEON_PURPLE if reloading else NEON_RED if ammo == 0 else Color("d7e6ff"))
-	ui_status.text="ステージ%d%s　・　%s　・　撃破 %d / %d" % [current_stage,"　ウェーブ %d/2" % stage_wave if current_stage == 2 else "", "初期アリーナ" if current_stage == 1 else "第2アリーナ",kills,stage_target]
-	ui_grapple.text = "⌁"
-	ui_grapple.add_theme_color_override("font_color", NEON_CYAN if has_grapple and grapple_cooldown <= 0.0 else Color("62728e"))
-	ui_minimap.queue_redraw()
+	ui_status.text="撃破  %02d / %02d" % [kills,stage_target]
+	gameplay_hud.refresh(self)
+func enemy_has_sight(from: Vector3, target: Vector3) -> bool:
+	var ray := PhysicsRayQueryParameters3D.create(from + Vector3(0,1.15,0), target + Vector3(0,.55,0), 1)
+	if is_instance_valid(player): ray.exclude = [player.get_rid()]
+	return get_world_3d().direct_space_state.intersect_ray(ray).is_empty()

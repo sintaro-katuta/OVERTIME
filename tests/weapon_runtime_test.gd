@@ -27,7 +27,7 @@ func run_tests() -> void:
 	root.add_child(game)
 	game.start_from_title()
 	game.progression.select_weapon("vanguard_556")
-	game.begin_run_from_preparation()
+	game.skills.selected = ["repulse", "aegis"]; game.begin_run_from_preparation()
 	game.set_physics_process(false)
 	for enemy in game.enemy_root.get_children(): enemy.free()
 	# Isolated high-altitude space keeps ballistic tests clear of the arena.
@@ -207,7 +207,7 @@ func run_tests() -> void:
 	assert((-game.muzzle_marker.global_basis.z.normalized()).dot(-game.camera.global_basis.z) > 0.999)
 	assert(game.get_weapon_direct_damage(0) == 18, "skin must not change damage")
 	game.select_preparation_tab("settings")
-	var toggle = game.preparation_content.get_child(0)
+	var toggle = game.preparation_content.get_child(0).find_child("AutomaticReload", true, false)
 	toggle.button_pressed = false
 	assert(not game.automatic_reload_enabled)
 	game.free()

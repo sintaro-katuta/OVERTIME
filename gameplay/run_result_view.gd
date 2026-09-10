@@ -31,8 +31,9 @@ func _ready() -> void:
 	detail_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	layout.add_child(detail_label)
 	retry_button = Button.new()
-	retry_button.text = "リトライ  ［R］"
+	retry_button.text = "リトライ"
 	retry_button.custom_minimum_size.y = 60
+	retry_button.focus_mode = Control.FOCUS_NONE
 	retry_button.pressed.connect(func(): retry_requested.emit())
 	layout.add_child(retry_button)
 	preparation_button = Button.new()
@@ -45,4 +46,3 @@ func show_result(title: String, detail: String) -> void:
 	title_label.text = title
 	detail_label.text = detail
 	visible = true
-	retry_button.grab_focus()

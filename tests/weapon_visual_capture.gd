@@ -10,7 +10,7 @@ func capture() -> void:
 	root.add_child(game)
 	game.start_from_title()
 	game.progression.select_weapon("vanguard_556")
-	game.begin_run_from_preparation()
+	game.skills.selected = ["repulse", "aegis"]; game.begin_run_from_preparation()
 	game.set_physics_process(false)
 	game.process_mode = Node.PROCESS_MODE_DISABLED
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
